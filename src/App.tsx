@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { pdfjs } from "react-pdf";
 import { Document, Page } from "react-pdf";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { match } from "ts-pattern";
@@ -24,6 +24,8 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   "pdfjs-dist/build/pdf.worker.min.mjs",
   import.meta.url
 ).toString();
+
+const MAX_PAGINATION = 2;
 
 async function uploadFile(apiUrl: string, file: File): Promise<string> {
   // Step 1: Get the presigned URL
@@ -71,16 +73,37 @@ export default function App() {
   const [apiToken, setApiToken] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
   const [output, setOutput] = useState<string>("");
+  const [pagination, setPagination] = useState<number>(0);
 
-  const jsonOutput = useMemo(() => {
-    try {
-      if (output) {
-        return JSON.parse(output);
+  const minPage = Math.max(0, pagination * MAX_PAGINATION);
+  const maxPage = Math.min((pagination + 1) * MAX_PAGINATION, numPages);
+  const pageRefs = useRef<HTMLCanvasElement[]>([]);
+
+  const [jsonOutput, setJsonOutput] = useState<any>(null);
+
+  useEffect(() => {
+    const parseOutput = async () => {
+      try {
+        if (output) {
+          let parsed = JSON.parse(output);
+
+          if (parsed.result.type === "url") {
+            const response = await fetch(parsed.result.url);
+            const json = await response.json();
+            parsed.result.type = "full";
+            parsed.result.chunks = json;
+            setJsonOutput(parsed);
+          } else if (parsed.result.type === "full") {
+            setJsonOutput(parsed);
+          }
+        }
+      } catch (error) {
+        console.error("Failed to parse output:", error);
+        setJsonOutput(null);
       }
-    } catch (error) {
-      console.error("Failed to parse output:", error);
-    }
-    return null;
+    };
+
+    parseOutput();
   }, [output]);
 
   const bboxes = useMemo(
@@ -95,213 +118,274 @@ export default function App() {
             }))
           )
         : [],
-    [output]
+    [jsonOutput]
   );
 
   return (
-    <div className="h-full w-full p-4 flex flex-col space-y-2">
-      <h1 className="text-2xl font-semibold">
-        Reducto Local Document Playground
-      </h1>
-      <div className="flex flex-row space-x-2 items-center">
-        <Label htmlFor="pdf-file" className="w-fit whitespace-nowrap">
-          PDF File:
-        </Label>
-        <Input
-          id="pdf-file"
-          type="file"
-          onChange={(e) => setPdfFile(e.target.files?.[0])}
-        />
-      </div>
-      <Tabs defaultValue="json" className="w-full">
-        <TabsList className="w-full">
-          <TabsTrigger className="w-full" value="json">
-            Manual JSON
-          </TabsTrigger>
-          <TabsTrigger className="w-full" value="api" disabled={true}>
-            Run API
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="json">
-          <Input
-            value={output}
-            onChange={(e) => setOutput(e.target.value)}
-            className="w-full"
-            placeholder="Paste your JSON here"
-          />
-        </TabsContent>
-        <TabsContent value="api" className="flex flex-col space-y-2">
-          <div className="flex flex-row space-x-2 items-center">
-            <Label htmlFor="api-url" className="w-fit whitespace-nowrap">
-              API URL:
-            </Label>
-            <Input
-              id="api-url"
-              type="text"
-              placeholder="https://v1.api.reducto.ai"
-              value={apiUrl}
-              onChange={(e) => setApiUrl(e.target.value)}
-            />
-          </div>
-          <div className="flex flex-row space-x-2 items-center">
-            <Label htmlFor="api-token" className="w-fit whitespace-nowrap">
-              Token:
-            </Label>
-            <Input
-              type="password"
-              id="api-token"
-              className="w-full"
-              value={apiToken}
-              onChange={(e) => setApiToken(e.target.value)}
-            />
-          </div>
-          <Button
-            className="w-full"
-            onClick={() => {
-              if (pdfFile) {
-                setLoading(true);
-                uploadFile(apiUrl, pdfFile)
-                  .then((out) => {
-                    getOutput(apiUrl, out, apiToken).then((out) => {
-                      setOutput(out);
-                      setLoading(false);
-                    });
-                  })
-                  .catch((err) => {
-                    setLoading(false);
-                    alert(err);
-                  });
-              }
-            }}
-          >
-            {loading ? "Loading..." : "Run Document"}
-          </Button>
-        </TabsContent>
-      </Tabs>
-
-      <div className="flex flex-row">
-        <div className="w-1/2">
-          <Document
-            file={pdfFile}
-            onLoadSuccess={(e) => {
-              setNumPages(e.numPages);
-            }}
-          >
-            {Array.from({ length: numPages }, (_, i) => (
-              <Page
-                key={`page_${i}`}
-                pageNumber={i + 1}
-                renderTextLayer={false}
-                renderAnnotationLayer={false}
-              >
-                <div className="absolute left-0 top-0 z-50 h-full w-full">
-                  {bboxes
-                    ?.filter((bbox) => bbox.page === i + 1)
-                    .map((bbox, i) => {
-                      return (
-                        <HoverCard key={i}>
-                          <HoverCardTrigger asChild>
-                            <div
-                              id={`bbox_${i}`}
-                              key={`bbox_${i}`}
-                              className="group absolute -z-30 outline outline-2 outline-blue-500"
-                              style={{
-                                top: bbox.top * 100 + "%",
-                                left: bbox.left * 100 + "%",
-                                width: bbox.width * 100 + "%",
-                                height: bbox.height * 100 + "%",
-                              }}
-                            >
-                              <div className="relative -left-[2px] -top-6 hidden w-fit whitespace-nowrap rounded-t-md bg-blue-500 px-2 py-1  text-xs text-white group-hover:block">
-                                {bbox.type}
-                              </div>
-                            </div>
-                          </HoverCardTrigger>
-
-                          <HoverCardContent className="z-50 mb-8 w-[50vw]">
-                            {jsonOutput!.result.type === "full" ? (
-                              <Content
-                                block={
-                                  jsonOutput!.result.chunks[bbox.chunkIndex]!
-                                    .blocks[bbox.blockIndex]!
-                                }
-                              />
-                            ) : null}
-                          </HoverCardContent>
-                        </HoverCard>
-                      );
-                    })}
-                </div>
-              </Page>
-            ))}
-          </Document>
-          <div className="w-full"></div>
-        </div>
-        <div className="w-1/2">
-          {jsonOutput ? (
-            <Accordion
-              type="multiple"
-              defaultValue={jsonOutput!.result.chunks.map(
-                (_, idx) => `accordion_item_${idx}`
-              )}
-              className="w-full"
+    <>
+      {numPages > MAX_PAGINATION && (
+        <div className="sticky top-0 bg-white z-50 w-full p-4">
+          <div className="flex flex-row items-center w-full justify-between">
+            <Button
+              disabled={minPage === 0}
+              onMouseDown={() => {
+                if (minPage > 0) {
+                  setPagination(pagination - 1);
+                }
+              }}
             >
-              {jsonOutput!.result.chunks.map((chunk, idx) => (
-                <AccordionItem
-                  key={`accordion_item_${idx}`}
-                  value={`accordion_item_${idx}`}
-                >
-                  <AccordionTrigger>Chunk {idx + 1}</AccordionTrigger>
-                  <AccordionContent className="flex h-fit flex-col space-y-2">
-                    <Tabs className="w-full" defaultValue="text">
-                      <TabsList className="grid w-full grid-cols-2">
-                        <TabsTrigger value="text">
-                          Concatenated Text
-                        </TabsTrigger>
-                        <TabsTrigger value="blocks">
-                          Individual Blocks
-                        </TabsTrigger>
-                      </TabsList>
-                      <TabsContent value="blocks">
-                        {chunk.blocks.map((c, i) => (
-                          <Card
-                            className="flex flex-col space-y-2"
-                            key={`card_${idx}_${i}`}
-                          >
-                            <CardHeader className="-mb-6 ">
-                              <Badge className="w-fit bg-blue-500 hover:bg-blue-500">
-                                {c.type}
-                              </Badge>
-                            </CardHeader>
-                            <CardContent className="whitespace-pre-line text-wrap">
-                              {c.content}
-                            </CardContent>
-                          </Card>
-                        ))}
-                      </TabsContent>
-                      <TabsContent value="text">
-                        <Card>
-                          <CardContent className="flex flex-col space-y-4 whitespace-pre-wrap pt-4">
-                            {chunk.enrichment_success ? (
-                              <div className="overflow-auto whitespace-pre">
-                                {chunk.enriched}
-                              </div>
-                            ) : null}
-                            {chunk.blocks.map((block, i: number) => (
-                              <Content block={block} key={i} />
+              Previous
+            </Button>
+            {Array.from({ length: maxPage - minPage }, (_, i) => (
+              <Button
+                key={i + minPage}
+                variant={"ghost"}
+                onClick={() => {
+                  pageRefs[i + minPage]?.scrollIntoView({
+                    behavior: "smooth",
+                    block: "center",
+                    inline: "center",
+                  });
+                }}
+              >
+                {i + minPage + 1}
+              </Button>
+            ))}
+            <Button
+              disabled={maxPage >= numPages}
+              onMouseDown={() => {
+                if (maxPage < numPages) {
+                  setPagination(pagination + 1);
+                }
+              }}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      )}
+      <div className="h-full w-full p-4 flex flex-col space-y-2">
+        <h1 className="text-2xl font-semibold">
+          Reducto Local Document Playground
+        </h1>
+        <div className="flex flex-row space-x-2 items-center">
+          <Label htmlFor="pdf-file" className="w-fit whitespace-nowrap">
+            PDF File:
+          </Label>
+          <Input
+            id="pdf-file"
+            type="file"
+            onChange={(e) => setPdfFile(e.target.files?.[0])}
+          />
+        </div>
+        <Tabs defaultValue="json" className="w-full">
+          <TabsList className="w-full">
+            <TabsTrigger className="w-full" value="json">
+              Manual JSON
+            </TabsTrigger>
+            <TabsTrigger className="w-full" value="api" disabled={true}>
+              Run API
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="json">
+            <Input
+              value={output}
+              onChange={(e) => setOutput(e.target.value)}
+              className="w-full"
+              placeholder="Paste your JSON here"
+            />
+          </TabsContent>
+          <TabsContent value="api" className="flex flex-col space-y-2">
+            <div className="flex flex-row space-x-2 items-center">
+              <Label htmlFor="api-url" className="w-fit whitespace-nowrap">
+                API URL:
+              </Label>
+              <Input
+                id="api-url"
+                type="text"
+                placeholder="https://v1.api.reducto.ai"
+                value={apiUrl}
+                onChange={(e) => setApiUrl(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-row space-x-2 items-center">
+              <Label htmlFor="api-token" className="w-fit whitespace-nowrap">
+                Token:
+              </Label>
+              <Input
+                type="password"
+                id="api-token"
+                className="w-full"
+                value={apiToken}
+                onChange={(e) => setApiToken(e.target.value)}
+              />
+            </div>
+            <Button
+              className="w-full"
+              onClick={() => {
+                if (pdfFile) {
+                  setLoading(true);
+                  uploadFile(apiUrl, pdfFile)
+                    .then((out) => {
+                      getOutput(apiUrl, out, apiToken).then((out) => {
+                        setOutput(out);
+                        setLoading(false);
+                      });
+                    })
+                    .catch((err) => {
+                      setLoading(false);
+                      alert(err);
+                    });
+                }
+              }}
+            >
+              {loading ? "Loading..." : "Run Document"}
+            </Button>
+          </TabsContent>
+        </Tabs>
+
+        <div className="flex flex-row">
+          <div className="w-1/2">
+            <Document
+              file={pdfFile}
+              onLoadSuccess={(e) => {
+                setPagination(0);
+                setNumPages(e.numPages);
+              }}
+            >
+              {Array.from({ length: numPages }, (_, i) =>
+                i >= minPage && i < maxPage ? (
+                  <Page
+                    canvasRef={(el) => (pageRefs[i] = el)}
+                    key={`page_${i}`}
+                    pageNumber={i + 1}
+                    renderTextLayer={false}
+                    renderAnnotationLayer={false}
+                  >
+                    <div className="absolute left-0 top-0 z-20 h-full w-full">
+                      {bboxes
+                        ?.filter((bbox) => bbox.page === i + 1)
+                        .map((bbox, i) => {
+                          return (
+                            <HoverCard key={i}>
+                              <HoverCardTrigger asChild>
+                                <div
+                                  id={`bbox_${i}`}
+                                  key={`bbox_${i}`}
+                                  className="group absolute -z-30 outline outline-2 outline-blue-500"
+                                  style={{
+                                    top: bbox.top * 100 + "%",
+                                    left: bbox.left * 100 + "%",
+                                    width: bbox.width * 100 + "%",
+                                    height: bbox.height * 100 + "%",
+                                  }}
+                                >
+                                  <div className="relative -left-[2px] -top-6 hidden w-fit whitespace-nowrap rounded-t-md bg-blue-500 px-2 py-1  text-xs text-white group-hover:block">
+                                    {bbox.type}
+                                  </div>
+                                </div>
+                              </HoverCardTrigger>
+
+                              <HoverCardContent className="z-50 mb-8 w-[50vw]">
+                                {jsonOutput!.result.type === "full" ? (
+                                  <Content
+                                    block={
+                                      jsonOutput!.result.chunks[
+                                        bbox.chunkIndex
+                                      ]!.blocks[bbox.blockIndex]!
+                                    }
+                                  />
+                                ) : null}
+                              </HoverCardContent>
+                            </HoverCard>
+                          );
+                        })}
+                    </div>
+                  </Page>
+                ) : null
+              )}
+            </Document>
+            <div className="w-full"></div>
+          </div>
+          <div className="w-1/2">
+            {jsonOutput ? (
+              <Accordion
+                type="multiple"
+                defaultValue={jsonOutput!.result.chunks.map(
+                  (_, idx) => `accordion_item_${idx}`
+                )}
+                className="w-full"
+              >
+                {jsonOutput!.result.chunks.map((chunk, idx) => {
+                  const isPageInRange = chunk.blocks.some(
+                    (block) =>
+                      block.bbox.page - 1 >= minPage &&
+                      block.bbox.page - 1 < maxPage
+                  );
+                  if (!isPageInRange) {
+                    return null;
+                  }
+                  return (
+                    <AccordionItem
+                      key={`accordion_item_${idx}`}
+                      value={`accordion_item_${idx}`}
+                    >
+                      <AccordionTrigger>Chunk {idx + 1}</AccordionTrigger>
+                      <AccordionContent className="flex h-fit flex-col space-y-2">
+                        <Tabs className="w-full" defaultValue="text">
+                          <TabsList className="grid w-full grid-cols-2">
+                            <TabsTrigger value="text">
+                              Concatenated Text
+                            </TabsTrigger>
+                            <TabsTrigger value="blocks">
+                              Individual Blocks
+                            </TabsTrigger>
+                          </TabsList>
+                          <TabsContent value="blocks">
+                            {chunk.blocks.map((c, i) => (
+                              <Card
+                                className="flex flex-col space-y-2"
+                                key={`card_${idx}_${i}`}
+                              >
+                                <CardHeader className="-mb-6 ">
+                                  <Badge className="w-fit bg-blue-500 hover:bg-blue-500">
+                                    {c.type}
+                                  </Badge>
+                                </CardHeader>
+                                <CardContent className="whitespace-pre-line text-wrap">
+                                  {c.content}
+                                </CardContent>
+                              </Card>
                             ))}
-                          </CardContent>
-                        </Card>
-                      </TabsContent>
-                    </Tabs>
-                  </AccordionContent>
-                </AccordionItem>
-              ))}
-            </Accordion>
-          ) : null}
+                          </TabsContent>
+                          <TabsContent value="text">
+                            <Card>
+                              <CardContent className="flex flex-col space-y-4 whitespace-pre-wrap pt-4">
+                                {chunk.enrichment_success ? (
+                                  <div className="overflow-auto whitespace-pre">
+                                    {chunk.enriched}
+                                  </div>
+                                ) : null}
+                                {chunk.blocks.map((block, i: number) =>
+                                  block.bbox.page - 1 >= minPage &&
+                                  block.bbox.page - 1 < maxPage ? (
+                                    <Content block={block} key={i} />
+                                  ) : null
+                                )}
+                              </CardContent>
+                            </Card>
+                          </TabsContent>
+                        </Tabs>
+                      </AccordionContent>
+                    </AccordionItem>
+                  );
+                })}
+              </Accordion>
+            ) : null}
+          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }
 

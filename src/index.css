@@ -7,6 +7,10 @@ canvas {
 @tailwind components;
 @tailwind utilities;
 
+html {
+  scroll-behavior: smooth;
+}
+
 table {
   font-family: arial, sans-serif;
   border-collapse: collapse; /* Changed to collapse to remove gaps between cells */
