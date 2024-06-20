@@ -20,12 +20,9 @@ import {
 } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 
-pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-  "pdfjs-dist/legacy/build/pdf.worker.min.mjs",
-  import.meta.url
-).toString();
+pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
 
-const MAX_PAGINATION = 2;
+const MAX_PAGINATION = 15;
 
 async function uploadFile(apiUrl: string, file: File): Promise<string> {
   // Step 1: Get the presigned URL
