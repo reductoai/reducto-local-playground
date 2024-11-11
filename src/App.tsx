@@ -24,27 +24,31 @@ pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/b
 
 const MAX_PAGINATION = 15;
 
-async function uploadFile(apiUrl: string, file: File): Promise<string> {
-  // Step 1: Get the presigned URL
+async function uploadFile(
+  apiUrl: string,
+  file: File,
+  token: string
+): Promise<string> {
+  const formData = new FormData();
+  formData.append("file", file);
+
   const response = await fetch(`${apiUrl}/upload`, {
     method: "POST",
+    body: formData,
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
   });
 
-  const uploadForm = await response.json();
-
-  // Step 2: Upload the file to the presigned URL
-  const uploadResponse = await fetch(uploadForm.presigned_url, {
-    method: "PUT",
-    body: file,
-  });
-
-  console.log(uploadResponse);
-
-  if (!uploadResponse.ok) {
+  if (!response.ok) {
+    console.error(await response.text());
     throw new Error("Failed to upload file");
   }
 
-  return uploadForm.file_id;
+  const result = await response.json();
+  console.log("file_id:", result.file_id);
+  console.error("Yipeee!");
+  return result.file_id;
 }
 
 async function getOutput(apiUrl: string, fileId: string, token: string) {
@@ -59,14 +63,16 @@ async function getOutput(apiUrl: string, fileId: string, token: string) {
       Authorization: `Bearer ${token}`,
     },
   });
-  console.log(await response.text());
+  if (!response.ok) {
+    console.error(await response.text());
+  }
   return response.json();
 }
 
 export default function App() {
   const [pdfFile, setPdfFile] = useState<File | undefined>(undefined);
   const [numPages, setNumPages] = useState<number>(0);
-  const [apiUrl, setApiUrl] = useState<string>("https://v1.api.reducto.ai");
+  const [apiUrl, setApiUrl] = useState<string>("https://platform.reducto.ai");
   const [apiToken, setApiToken] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
   const [output, setOutput] = useState<string>("");
@@ -180,7 +186,7 @@ export default function App() {
             <TabsTrigger className="w-full" value="json">
               Manual JSON
             </TabsTrigger>
-            <TabsTrigger className="w-full" value="api" disabled={true}>
+            <TabsTrigger className="w-full" value="api">
               Run API
             </TabsTrigger>
           </TabsList>
@@ -222,10 +228,11 @@ export default function App() {
               onClick={() => {
                 if (pdfFile) {
                   setLoading(true);
-                  uploadFile(apiUrl, pdfFile)
+                  uploadFile(apiUrl, pdfFile, apiToken)
                     .then((out) => {
+                      console.log("file_id:", out);
                       getOutput(apiUrl, out, apiToken).then((out) => {
-                        setOutput(out);
+                        setOutput(JSON.stringify(out));
                         setLoading(false);
                       });
                     })
