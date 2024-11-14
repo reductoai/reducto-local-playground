@@ -72,8 +72,12 @@ async function getOutput(apiUrl: string, fileId: string, token: string) {
 export default function App() {
   const [pdfFile, setPdfFile] = useState<File | undefined>(undefined);
   const [numPages, setNumPages] = useState<number>(0);
-  const [apiUrl, setApiUrl] = useState<string>("https://platform.reducto.ai");
-  const [apiToken, setApiToken] = useState<string>("");
+  const [apiUrl, setApiUrl] = useState<string>(
+    import.meta.env.VITE_API_URL ?? "https://platform.reducto.ai"
+  );
+  const [apiToken, setApiToken] = useState<string>(
+    import.meta.env.VITE_API_TOKEN ?? ""
+  );
   const [loading, setLoading] = useState<boolean>(false);
   const [output, setOutput] = useState<string>("");
   const [pagination, setPagination] = useState<number>(0);
