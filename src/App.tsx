@@ -57,6 +57,10 @@ async function getOutput(apiUrl: string, fileId: string, token: string) {
     method: "POST",
     body: JSON.stringify({
       document_url: fileId,
+      config: {
+        pdf_ocr: "hybrid",
+        ocr_system: "tesseract",
+      },
     }),
     headers: {
       "Content-Type": "application/json",
