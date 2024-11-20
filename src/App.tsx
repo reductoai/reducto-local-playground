@@ -19,6 +19,7 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
+import { useQuery } from "@tanstack/react-query";
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
 
@@ -51,26 +52,61 @@ async function uploadFile(
   return result.file_id;
 }
 
-async function getOutput(apiUrl: string, fileId: string, token: string) {
-  console.log("document_url:", fileId);
-  const response = await fetch(`${apiUrl}/parse`, {
-    method: "POST",
-    body: JSON.stringify({
-      document_url: fileId,
-      config: {
-        pdf_ocr: "hybrid",
-        ocr_system: "tesseract",
-      },
-    }),
+async function fetchJobStatus(apiUrl: string, jobId: string, token: string) {
+  const response = await fetch(`${apiUrl}/job/${jobId}`, {
+    method: "GET",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
     },
   });
   if (!response.ok) {
-    console.error(await response.text());
+    throw new Error("Network response was not ok");
   }
-  return response.json();
+  const jobStatusResponse = await response.json();
+  if (
+    jobStatusResponse.status === "Pending" ||
+    jobStatusResponse.status === "Idle"
+  ) {
+    throw new Error(
+      `Job ${jobStatusResponse.status}, progress: ${jobStatusResponse.progress}`
+    );
+  }
+  return jobStatusResponse;
+}
+
+async function getJobId(apiUrl: string, fileId: string, token: string) {
+  console.log("document_url:", fileId);
+  try {
+    const async_response = await fetch(`${apiUrl}/parse`, {
+      method: "POST",
+      body: JSON.stringify({
+        document_url: fileId,
+        async: {
+          enabled: true,
+        },
+        config: {
+          pdf_ocr: "hybrid",
+          ocr_system: "tesseract",
+        },
+      }),
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!async_response.ok) {
+      console.error(await async_response.text());
+      throw new Error("Failed to start job");
+    }
+
+    const { job_id } = await async_response.json();
+    return job_id;
+  } catch (err) {
+    console.error(err);
+    throw err;
+  }
 }
 
 export default function App() {
@@ -91,6 +127,17 @@ export default function App() {
   const pageRefs = useRef<HTMLCanvasElement[]>([]);
 
   const [jsonOutput, setJsonOutput] = useState<any>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
+
+  const { data: jobData } = useQuery({
+    queryKey: ["jobStatus", jobId],
+    queryFn: () => fetchJobStatus(apiUrl, jobId!, apiToken),
+    enabled: !!jobId,
+    refetchInterval: 1000,
+    refetchIntervalInBackground: true,
+    retry: 15 * 60, // Timeout after 15 minutes
+    retryDelay: 1000,
+  });
 
   useEffect(() => {
     const parseOutput = async () => {
@@ -101,8 +148,7 @@ export default function App() {
           if (parsed.result.type === "url") {
             const response = await fetch(parsed.result.url);
             const json = await response.json();
-            parsed.result.type = "full";
-            parsed.result.chunks = json;
+            parsed.result = json;
             setJsonOutput(parsed);
           } else if (parsed.result.type === "full") {
             setJsonOutput(parsed);
@@ -116,6 +162,17 @@ export default function App() {
 
     parseOutput();
   }, [output]);
+
+  useEffect(() => {
+    if (jobData) {
+      if (jobData.status === "Failed") {
+        console.error(`Job ${jobId} failed:`, jobData.reason);
+      }
+      setOutput(JSON.stringify(jobData.result));
+      setLoading(false);
+      setJobId(null);
+    }
+  }, [jobData]);
 
   const bboxes = useMemo(
     () =>
@@ -239,10 +296,10 @@ export default function App() {
                   uploadFile(apiUrl, pdfFile, apiToken)
                     .then((out) => {
                       console.log("file_id:", out);
-                      getOutput(apiUrl, out, apiToken).then((out) => {
-                        setOutput(JSON.stringify(out));
-                        setLoading(false);
-                      });
+                      return getJobId(apiUrl, out, apiToken);
+                    })
+                    .then((jobId) => {
+                      setJobId(jobId);
                     })
                     .catch((err) => {
                       setLoading(false);
