@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { useQuery } from "@tanstack/react-query";
+import { Loader2Icon } from "lucide-react";
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
 
@@ -48,7 +49,6 @@ async function uploadFile(
 
   const result = await response.json();
   console.log("file_id:", result.file_id);
-  console.error("Yipeee!");
   return result.file_id;
 }
 
@@ -243,7 +243,10 @@ export default function App() {
           <Input
             id="pdf-file"
             type="file"
-            onChange={(e) => setPdfFile(e.target.files?.[0])}
+            onChange={(e) => {
+              setJsonOutput(null);
+              setPdfFile(e.target.files?.[0]);
+            }}
           />
         </div>
         <Tabs defaultValue="json" className="w-full">
@@ -307,8 +310,13 @@ export default function App() {
                     });
                 }
               }}
+              disabled={loading}
             >
-              {loading ? "Loading..." : "Run Document"}
+              {loading ? (
+                <Loader2Icon className="animate-spin" />
+              ) : (
+                "Run Document"
+              )}
             </Button>
           </TabsContent>
         </Tabs>
