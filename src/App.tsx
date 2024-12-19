@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { pdfjs } from "react-pdf";
 import { Document, Page } from "react-pdf";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { match } from "ts-pattern";
@@ -189,6 +189,78 @@ export default function App() {
     [jsonOutput]
   );
 
+  const scrollToBboxOrBlock = useCallback(
+    (chunkIndex: number, blockIndex: number, isBbox: boolean = true) => {
+      // First ensure the accordion is open
+      const accordionItem = document.getElementById(
+        `accordion_item_${chunkIndex}`
+      );
+      if (accordionItem) {
+        const accordionTrigger = accordionItem.querySelector(
+          'h3 > button[data-state="closed"]'
+        );
+        console.log("accordionTrigger", accordionTrigger);
+        if (accordionTrigger) {
+          (accordionTrigger as HTMLButtonElement).click();
+          // Wait for accordion animation to complete before scrolling
+          setTimeout(() => {
+            const blockIds = isBbox
+              ? [`bbox_${chunkIndex}_${blockIndex}`]
+              : [
+                  `block_${chunkIndex}_${blockIndex}`,
+                  `text_block_${chunkIndex}_${blockIndex}`,
+                ];
+
+            for (const blockId of blockIds) {
+              const element = document.getElementById(blockId);
+              if (element) {
+                element.scrollIntoView({ behavior: "smooth", block: "center" });
+                const classToTemporarilyAdd = isBbox
+                  ? "bg-blue-500 bg-opacity-50"
+                  : "bg-blue-200";
+                element.classList.add(...classToTemporarilyAdd.split(" "));
+                setTimeout(
+                  () =>
+                    element.classList.remove(
+                      ...classToTemporarilyAdd.split(" ")
+                    ),
+                  2000
+                );
+                break;
+              }
+            }
+          }, 300); // Adjust timing if needed to match your accordion animation duration
+        } else {
+          // Accordion is already open, proceed with scrolling
+          const blockIds = isBbox
+            ? [`bbox_${chunkIndex}_${blockIndex}`]
+            : [
+                `block_${chunkIndex}_${blockIndex}`,
+                `text_block_${chunkIndex}_${blockIndex}`,
+              ];
+
+          for (const blockId of blockIds) {
+            const element = document.getElementById(blockId);
+            if (element) {
+              element.scrollIntoView({ behavior: "smooth", block: "center" });
+              const classToTemporarilyAdd = isBbox
+                ? "bg-blue-500 bg-opacity-50"
+                : "bg-blue-200";
+              element.classList.add(...classToTemporarilyAdd.split(" "));
+              setTimeout(
+                () =>
+                  element.classList.remove(...classToTemporarilyAdd.split(" ")),
+                2000
+              );
+              break;
+            }
+          }
+        }
+      }
+    },
+    []
+  );
+
   return (
     <>
       {numPages > MAX_PAGINATION && (
@@ -347,17 +419,24 @@ export default function App() {
                             <HoverCard key={i}>
                               <HoverCardTrigger asChild>
                                 <div
-                                  id={`bbox_${i}`}
-                                  key={`bbox_${i}`}
-                                  className="group absolute -z-30 outline outline-2 outline-blue-500"
+                                  id={`bbox_${bbox.chunkIndex}_${bbox.blockIndex}`}
+                                  key={`bbox_${bbox.chunkIndex}_${bbox.blockIndex}`}
+                                  className="group absolute -z-30 outline outline-2 outline-blue-500 cursor-pointer transition-colors"
                                   style={{
                                     top: bbox.top * 100 + "%",
                                     left: bbox.left * 100 + "%",
                                     width: bbox.width * 100 + "%",
                                     height: bbox.height * 100 + "%",
                                   }}
+                                  onClick={() =>
+                                    scrollToBboxOrBlock(
+                                      bbox.chunkIndex,
+                                      bbox.blockIndex,
+                                      false
+                                    )
+                                  }
                                 >
-                                  <div className="relative -left-[2px] -top-6 hidden w-fit whitespace-nowrap rounded-t-md bg-blue-500 px-2 py-1  text-xs text-white group-hover:block">
+                                  <div className="relative -left-[2px] -top-6 hidden w-fit whitespace-nowrap rounded-t-md bg-blue-500 px-2 py-1 text-xs text-white group-hover:block">
                                     {bbox.type}
                                   </div>
                                 </div>
@@ -406,6 +485,7 @@ export default function App() {
                     <AccordionItem
                       key={`accordion_item_${idx}`}
                       value={`accordion_item_${idx}`}
+                      id={`accordion_item_${idx}`}
                     >
                       <AccordionTrigger>Chunk {idx + 1}</AccordionTrigger>
                       <AccordionContent className="flex h-fit flex-col space-y-2">
@@ -421,8 +501,18 @@ export default function App() {
                           <TabsContent value="blocks">
                             {chunk.blocks.map((c, i) => (
                               <Card
-                                className="flex flex-col space-y-2"
+                                className="flex flex-col space-y-2 cursor-pointer hover:bg-gray-50 transition-colors [&.bg-blue-200]:!bg-blue-200"
                                 key={`card_${idx}_${i}`}
+                                id={`block_${idx}_${i}`}
+                                onClick={() => {
+                                  const bbox = bboxes.find(
+                                    (b) =>
+                                      b.chunkIndex === idx && b.blockIndex === i
+                                  );
+                                  if (bbox) {
+                                    scrollToBboxOrBlock(idx, i);
+                                  }
+                                }}
                               >
                                 <CardHeader className="-mb-6 ">
                                   <Badge className="w-fit bg-blue-500 hover:bg-blue-500">
@@ -446,7 +536,23 @@ export default function App() {
                                 {chunk.blocks.map((block, i: number) =>
                                   block.bbox.page - 1 >= minPage &&
                                   block.bbox.page - 1 < maxPage ? (
-                                    <Content block={block} key={i} />
+                                    <div
+                                      key={i}
+                                      id={`text_block_${idx}_${i}`}
+                                      className="cursor-pointer hover:bg-gray-50 transition-colors"
+                                      onClick={() => {
+                                        const bbox = bboxes.find(
+                                          (b) =>
+                                            b.chunkIndex === idx &&
+                                            b.blockIndex === i
+                                        );
+                                        if (bbox) {
+                                          scrollToBboxOrBlock(idx, i);
+                                        }
+                                      }}
+                                    >
+                                      <Content block={block} />
+                                    </div>
                                   ) : null
                                 )}
                               </CardContent>
