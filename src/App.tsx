@@ -191,26 +191,70 @@ export default function App() {
 
   const scrollToBboxOrBlock = useCallback(
     (chunkIndex: number, blockIndex: number, isBbox: boolean = true) => {
-      const blockIds = isBbox
-        ? [`bbox_${chunkIndex}_${blockIndex}`]
-        : [
-            `block_${chunkIndex}_${blockIndex}`,
-            `text_block_${chunkIndex}_${blockIndex}`,
-          ];
+      // First ensure the accordion is open
+      const accordionItem = document.getElementById(
+        `accordion_item_${chunkIndex}`
+      );
+      if (accordionItem) {
+        const accordionTrigger = accordionItem.querySelector(
+          'h3 > button[data-state="closed"]'
+        );
+        console.log("accordionTrigger", accordionTrigger);
+        if (accordionTrigger) {
+          (accordionTrigger as HTMLButtonElement).click();
+          // Wait for accordion animation to complete before scrolling
+          setTimeout(() => {
+            const blockIds = isBbox
+              ? [`bbox_${chunkIndex}_${blockIndex}`]
+              : [
+                  `block_${chunkIndex}_${blockIndex}`,
+                  `text_block_${chunkIndex}_${blockIndex}`,
+                ];
 
-      for (const blockId of blockIds) {
-        const element = document.getElementById(blockId);
-        if (element) {
-          element.scrollIntoView({ behavior: "smooth", block: "center" });
-          const classToTemporarilyAdd = isBbox
-            ? "bg-blue-500 bg-opacity-50"
-            : "bg-blue-200";
-          element.classList.add(...classToTemporarilyAdd.split(" "));
-          setTimeout(
-            () => element.classList.remove(...classToTemporarilyAdd.split(" ")),
-            2000
-          );
-          break;
+            for (const blockId of blockIds) {
+              const element = document.getElementById(blockId);
+              if (element) {
+                element.scrollIntoView({ behavior: "smooth", block: "center" });
+                const classToTemporarilyAdd = isBbox
+                  ? "bg-blue-500 bg-opacity-50"
+                  : "bg-blue-200";
+                element.classList.add(...classToTemporarilyAdd.split(" "));
+                setTimeout(
+                  () =>
+                    element.classList.remove(
+                      ...classToTemporarilyAdd.split(" ")
+                    ),
+                  2000
+                );
+                break;
+              }
+            }
+          }, 300); // Adjust timing if needed to match your accordion animation duration
+        } else {
+          // Accordion is already open, proceed with scrolling
+          const blockIds = isBbox
+            ? [`bbox_${chunkIndex}_${blockIndex}`]
+            : [
+                `block_${chunkIndex}_${blockIndex}`,
+                `text_block_${chunkIndex}_${blockIndex}`,
+              ];
+
+          for (const blockId of blockIds) {
+            const element = document.getElementById(blockId);
+            if (element) {
+              element.scrollIntoView({ behavior: "smooth", block: "center" });
+              const classToTemporarilyAdd = isBbox
+                ? "bg-blue-500 bg-opacity-50"
+                : "bg-blue-200";
+              element.classList.add(...classToTemporarilyAdd.split(" "));
+              setTimeout(
+                () =>
+                  element.classList.remove(...classToTemporarilyAdd.split(" ")),
+                2000
+              );
+              break;
+            }
+          }
         }
       }
     },
@@ -441,6 +485,7 @@ export default function App() {
                     <AccordionItem
                       key={`accordion_item_${idx}`}
                       value={`accordion_item_${idx}`}
+                      id={`accordion_item_${idx}`}
                     >
                       <AccordionTrigger>Chunk {idx + 1}</AccordionTrigger>
                       <AccordionContent className="flex h-fit flex-col space-y-2">
@@ -456,7 +501,7 @@ export default function App() {
                           <TabsContent value="blocks">
                             {chunk.blocks.map((c, i) => (
                               <Card
-                                className="flex flex-col space-y-2 cursor-pointer hover:bg-gray-50 transition-colors"
+                                className="flex flex-col space-y-2 cursor-pointer hover:bg-gray-50 transition-colors [&.bg-blue-200]:!bg-blue-200"
                                 key={`card_${idx}_${i}`}
                                 id={`block_${idx}_${i}`}
                                 onClick={() => {
