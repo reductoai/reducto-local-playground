@@ -92,7 +92,7 @@ async function getJobId(apiUrl: string, fileId: string, token: string) {
         },
         config: {
           pdf_ocr: "hybrid",
-          ocr_system: "gcloud",
+          ocr_system: "tesseract",
         },
       }),
       headers: {
