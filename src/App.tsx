@@ -302,7 +302,7 @@ export default function App() {
             </h1>
           </AccordionTrigger>
           <AccordionContent>
-            <div className="controls-section space-y-2">
+            <div className="controls-section space-y-2 px-1">
               <div className="flex flex-row space-x-2 items-center">
                 <Label htmlFor="pdf-file" className="w-fit whitespace-nowrap">
                   PDF File:
