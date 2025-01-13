@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2Icon, ChevronUp, ChevronDown } from "lucide-react";
+import { Loader2Icon } from "lucide-react";
 import {
   ResizableHandle,
   ResizablePanel,
