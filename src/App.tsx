@@ -204,7 +204,6 @@ export default function App() {
         const accordionTrigger = accordionItem.querySelector(
           'h3 > button[data-state="closed"]'
         );
-        console.log("accordionTrigger", accordionTrigger);
         if (accordionTrigger) {
           (accordionTrigger as HTMLButtonElement).click();
           // Wait for accordion animation to complete before scrolling
