@@ -20,7 +20,12 @@ import {
 } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2Icon } from "lucide-react";
+import { Loader2Icon, ChevronUp, ChevronDown } from "lucide-react";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
 
@@ -87,7 +92,7 @@ async function getJobId(apiUrl: string, fileId: string, token: string) {
         },
         config: {
           pdf_ocr: "hybrid",
-          ocr_system: "tesseract",
+          ocr_system: "gcloud",
         },
       }),
       headers: {
@@ -261,146 +266,192 @@ export default function App() {
     []
   );
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Check if the active element is an input or textarea
+      const activeElement = document.activeElement;
+      const isInputActive =
+        activeElement instanceof HTMLInputElement ||
+        activeElement instanceof HTMLTextAreaElement;
+
+      if (!isInputActive) {
+        if (e.key === "ArrowRight" && maxPage < numPages) {
+          setPagination(pagination + 1);
+        } else if (e.key === "ArrowLeft" && minPage > 0) {
+          setPagination(pagination - 1);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [pagination, maxPage, numPages, minPage]);
+
   return (
-    <>
-      {numPages > MAX_PAGINATION && (
-        <div className="sticky top-0 bg-white z-50 w-full p-4">
-          <div className="flex flex-row items-center w-full justify-between">
-            <Button
-              disabled={minPage === 0}
-              onMouseDown={() => {
-                if (minPage > 0) {
-                  setPagination(pagination - 1);
-                }
-              }}
-            >
-              Previous
-            </Button>
-            {Array.from({ length: maxPage - minPage }, (_, i) => (
+    <div className="flex flex-col h-screen p-4">
+      <Accordion
+        type="single"
+        collapsible
+        defaultValue="controls"
+        className="flex-none"
+      >
+        <AccordionItem value="controls" className="border-none">
+          <AccordionTrigger className="hover:no-underline">
+            <h1 className="text-2xl font-semibold">
+              Reducto Local Document Playground
+            </h1>
+          </AccordionTrigger>
+          <AccordionContent>
+            <div className="controls-section space-y-2">
+              <div className="flex flex-row space-x-2 items-center">
+                <Label htmlFor="pdf-file" className="w-fit whitespace-nowrap">
+                  PDF File:
+                </Label>
+                <Input
+                  id="pdf-file"
+                  type="file"
+                  onChange={(e) => {
+                    setJsonOutput(null);
+                    setPdfFile(e.target.files?.[0]);
+                  }}
+                />
+              </div>
+              <Tabs defaultValue="json" className="w-full">
+                <TabsList className="w-full">
+                  <TabsTrigger className="w-full" value="json">
+                    Manual JSON
+                  </TabsTrigger>
+                  <TabsTrigger className="w-full" value="api">
+                    Run API
+                  </TabsTrigger>
+                </TabsList>
+                <TabsContent value="json">
+                  <Input
+                    value={output}
+                    onChange={(e) => setOutput(e.target.value)}
+                    className="w-full"
+                    placeholder="Paste your JSON here"
+                  />
+                </TabsContent>
+                <TabsContent value="api" className="flex flex-col space-y-2">
+                  <div className="flex flex-row space-x-2 items-center">
+                    <Label
+                      htmlFor="api-url"
+                      className="w-fit whitespace-nowrap"
+                    >
+                      API URL:
+                    </Label>
+                    <Input
+                      id="api-url"
+                      type="text"
+                      placeholder="https://v1.api.reducto.ai"
+                      value={apiUrl}
+                      onChange={(e) => setApiUrl(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex flex-row space-x-2 items-center">
+                    <Label
+                      htmlFor="api-token"
+                      className="w-fit whitespace-nowrap"
+                    >
+                      Token:
+                    </Label>
+                    <Input
+                      type="password"
+                      id="api-token"
+                      className="w-full"
+                      value={apiToken}
+                      onChange={(e) => setApiToken(e.target.value)}
+                    />
+                  </div>
+                  <Button
+                    className="w-full"
+                    onClick={() => {
+                      if (pdfFile) {
+                        setLoading(true);
+                        uploadFile(apiUrl, pdfFile, apiToken)
+                          .then((out) => {
+                            console.log("file_id:", out);
+                            return getJobId(apiUrl, out, apiToken);
+                          })
+                          .then((jobId) => {
+                            setJobId(jobId);
+                          })
+                          .catch((err) => {
+                            setLoading(false);
+                            alert(err);
+                          });
+                      }
+                    }}
+                    disabled={loading}
+                  >
+                    {loading ? (
+                      <Loader2Icon className="animate-spin" />
+                    ) : (
+                      "Run Document"
+                    )}
+                  </Button>
+                </TabsContent>
+              </Tabs>
+            </div>
+          </AccordionContent>
+        </AccordionItem>
+        {numPages > MAX_PAGINATION && (
+          <div className="flex-none bg-white z-50 w-full py-4">
+            <div className="flex flex-row items-center w-full justify-between">
               <Button
-                key={i + minPage}
-                variant={"ghost"}
-                onClick={() => {
-                  pageRefs[i + minPage]?.scrollIntoView({
-                    behavior: "smooth",
-                    block: "center",
-                    inline: "center",
-                  });
+                disabled={minPage === 0}
+                onMouseDown={() => {
+                  if (minPage > 0) {
+                    setPagination(pagination - 1);
+                  }
                 }}
               >
-                {i + minPage + 1}
+                Previous
               </Button>
-            ))}
-            <Button
-              disabled={maxPage >= numPages}
-              onMouseDown={() => {
-                if (maxPage < numPages) {
-                  setPagination(pagination + 1);
-                }
-              }}
-            >
-              Next
-            </Button>
-          </div>
-        </div>
-      )}
-      <div className="h-full w-full p-4 flex flex-col space-y-2">
-        <h1 className="text-2xl font-semibold">
-          Reducto Local Document Playground
-        </h1>
-        <div className="flex flex-row space-x-2 items-center">
-          <Label htmlFor="pdf-file" className="w-fit whitespace-nowrap">
-            PDF File:
-          </Label>
-          <Input
-            id="pdf-file"
-            type="file"
-            onChange={(e) => {
-              setJsonOutput(null);
-              setPdfFile(e.target.files?.[0]);
-            }}
-          />
-        </div>
-        <Tabs defaultValue="json" className="w-full">
-          <TabsList className="w-full">
-            <TabsTrigger className="w-full" value="json">
-              Manual JSON
-            </TabsTrigger>
-            <TabsTrigger className="w-full" value="api">
-              Run API
-            </TabsTrigger>
-          </TabsList>
-          <TabsContent value="json">
-            <Input
-              value={output}
-              onChange={(e) => setOutput(e.target.value)}
-              className="w-full"
-              placeholder="Paste your JSON here"
-            />
-          </TabsContent>
-          <TabsContent value="api" className="flex flex-col space-y-2">
-            <div className="flex flex-row space-x-2 items-center">
-              <Label htmlFor="api-url" className="w-fit whitespace-nowrap">
-                API URL:
-              </Label>
-              <Input
-                id="api-url"
-                type="text"
-                placeholder="https://v1.api.reducto.ai"
-                value={apiUrl}
-                onChange={(e) => setApiUrl(e.target.value)}
-              />
-            </div>
-            <div className="flex flex-row space-x-2 items-center">
-              <Label htmlFor="api-token" className="w-fit whitespace-nowrap">
-                Token:
-              </Label>
-              <Input
-                type="password"
-                id="api-token"
-                className="w-full"
-                value={apiToken}
-                onChange={(e) => setApiToken(e.target.value)}
-              />
-            </div>
-            <Button
-              className="w-full"
-              onClick={() => {
-                if (pdfFile) {
-                  setLoading(true);
-                  uploadFile(apiUrl, pdfFile, apiToken)
-                    .then((out) => {
-                      console.log("file_id:", out);
-                      return getJobId(apiUrl, out, apiToken);
-                    })
-                    .then((jobId) => {
-                      setJobId(jobId);
-                    })
-                    .catch((err) => {
-                      setLoading(false);
-                      alert(err);
+              {Array.from({ length: maxPage - minPage }, (_, i) => (
+                <Button
+                  key={i + minPage}
+                  variant={"ghost"}
+                  onClick={() => {
+                    pageRefs[i + minPage]?.scrollIntoView({
+                      behavior: "smooth",
+                      block: "center",
+                      inline: "center",
                     });
-                }
-              }}
-              disabled={loading}
-            >
-              {loading ? (
-                <Loader2Icon className="animate-spin" />
-              ) : (
-                "Run Document"
-              )}
-            </Button>
-          </TabsContent>
-        </Tabs>
+                  }}
+                >
+                  {i + minPage + 1}
+                </Button>
+              ))}
+              <Button
+                disabled={maxPage >= numPages}
+                onMouseDown={() => {
+                  if (maxPage < numPages) {
+                    setPagination(pagination + 1);
+                  }
+                }}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        )}
+      </Accordion>
 
-        <div className="flex flex-row">
-          <div className="w-1/2">
+      <ResizablePanelGroup
+        direction="horizontal"
+        className="flex-1 overflow-hidden border rounded-lg shadow-sm"
+      >
+        <ResizablePanel defaultSize={50} minSize={30}>
+          <div className="h-full overflow-auto p-4">
             <Document
               file={pdfFile}
               onLoadSuccess={(e) => {
                 setPagination(0);
                 setNumPages(e.numPages);
               }}
+              className="space-y-4"
             >
               {Array.from({ length: numPages }, (_, i) =>
                 i >= minPage && i < maxPage ? (
@@ -410,6 +461,7 @@ export default function App() {
                     pageNumber={i + 1}
                     renderTextLayer={false}
                     renderAnnotationLayer={false}
+                    className="border rounded-lg overflow-hidden shadow-sm"
                   >
                     <div className="absolute left-0 top-0 z-20 h-full w-full">
                       {bboxes
@@ -461,9 +513,13 @@ export default function App() {
                 ) : null
               )}
             </Document>
-            <div className="w-full"></div>
           </div>
-          <div className="w-1/2">
+        </ResizablePanel>
+
+        <ResizableHandle withHandle />
+
+        <ResizablePanel defaultSize={50} minSize={30}>
+          <div className="h-full overflow-auto px-4">
             {jsonOutput ? (
               <Accordion
                 type="multiple"
@@ -566,9 +622,9 @@ export default function App() {
               </Accordion>
             ) : null}
           </div>
-        </div>
-      </div>
-    </>
+        </ResizablePanel>
+      </ResizablePanelGroup>
+    </div>
   );
 }
 
