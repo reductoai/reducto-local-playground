@@ -699,8 +699,12 @@ export function Content({ block }: { block: any }) {
       }
       return null;
     })
-    .with("Page Number", () => null)
-    .with("Footer", () => null)
+    .with("Page Number", () => (
+      <p className="mb-2 whitespace-pre-wrap">{block.content}</p>
+    ))
+    .with("Footer", () => (
+      <p className="mb-2 whitespace-pre-wrap">{block.content}</p>
+    ))
     .otherwise(() => (
       <p className="mb-2 whitespace-pre-wrap">{block.content}</p>
     ));
