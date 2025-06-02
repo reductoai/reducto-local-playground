@@ -1,17 +1,3 @@
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { pdfjs } from "react-pdf";
-import { Document, Page } from "react-pdf";
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Label } from "@/components/ui/label";
-import { match } from "ts-pattern";
-import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@/components/ui/hover-card";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import {
   Accordion,
   AccordionContent,
@@ -19,13 +5,38 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
-import { useQuery } from "@tanstack/react-query";
-import { Loader2Icon } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { HoverCard, HoverCardTrigger } from "@/components/ui/hover-card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { useQuery } from "@tanstack/react-query";
+import {
+  BotIcon,
+  Download,
+  LayoutPanelTop,
+  Loader2Icon,
+  Sparkles,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Document, Page, pdfjs } from "react-pdf";
+import { match } from "ts-pattern";
+import { components } from "../schema";
+import { Textarea } from "./components/ui/textarea";
+import { Toggle } from "./components/ui/toggle";
+import { bboxTypeColors } from "./lib/colors";
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
 
@@ -44,7 +55,9 @@ async function uploadFile(
     body: formData,
     headers: {
       Authorization: `Bearer ${token}`,
+      Origin: window.location.origin,
     },
+    mode: "cors",
   });
 
   if (!response.ok) {
@@ -63,6 +76,7 @@ async function fetchJobStatus(apiUrl: string, jobId: string, token: string) {
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
+      Origin: window.location.origin,
     },
   });
   if (!response.ok) {
@@ -80,24 +94,24 @@ async function fetchJobStatus(apiUrl: string, jobId: string, token: string) {
   return jobStatusResponse;
 }
 
-async function getJobId(apiUrl: string, fileId: string, token: string) {
+async function getJobId(
+  apiUrl: string,
+  fileId: string,
+  token: string,
+  apiConfig: ParseConfig
+) {
   console.log("document_url:", fileId);
   try {
-    const async_response = await fetch(`${apiUrl}/parse`, {
+    const async_response = await fetch(`${apiUrl}/parse_async`, {
       method: "POST",
       body: JSON.stringify({
+        ...apiConfig,
         document_url: fileId,
-        async: {
-          enabled: true,
-        },
-        config: {
-          pdf_ocr: "hybrid",
-          ocr_system: "tesseract",
-        },
       }),
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
+        Origin: window.location.origin,
       },
     });
 
@@ -114,6 +128,35 @@ async function getJobId(apiUrl: string, fileId: string, token: string) {
   }
 }
 
+type ParseConfig = {
+  options?: components["schemas"]["BaseProcessingOptions"];
+  advanced_options?: components["schemas"]["AdvancedProcessingOptions"];
+  experimental_options?: components["schemas"]["ExperimentalProcessingOptions"];
+};
+const defaultParseConfig: ParseConfig = {
+  options: {
+    chunking: {
+      chunk_mode: "variable",
+    },
+    table_summary: {
+      enabled: false,
+    },
+    figure_summary: {
+      enabled: false,
+    },
+    ocr_mode: "standard",
+    extraction_mode: "hybrid",
+  },
+  advanced_options: {
+    table_output_format: "html",
+    ocr_system: "multilingual",
+  },
+  experimental_options: {
+    return_figure_images: true,
+    return_table_images: true,
+  },
+};
+
 export default function App() {
   const [pdfFile, setPdfFile] = useState<File | undefined>(undefined);
   const [numPages, setNumPages] = useState<number>(0);
@@ -126,13 +169,17 @@ export default function App() {
   const [loading, setLoading] = useState<boolean>(false);
   const [output, setOutput] = useState<string>("");
   const [pagination, setPagination] = useState<number>(0);
+  const [showBlocks, setShowBlocks] = useState<boolean>(false);
 
   const minPage = Math.max(0, pagination * MAX_PAGINATION);
   const maxPage = Math.min((pagination + 1) * MAX_PAGINATION, numPages);
   const pageRefs = useRef<HTMLCanvasElement[]>([]);
 
-  const [jsonOutput, setJsonOutput] = useState<any>(null);
+  const [jsonOutput, setJsonOutput] = useState<
+    components["schemas"]["ParseResponse"] | null
+  >(null);
   const [jobId, setJobId] = useState<string | null>(null);
+  const [apiConfig, setApiConfig] = useState<ParseConfig>(defaultParseConfig);
 
   const { data: jobData } = useQuery({
     queryKey: ["jobStatus", jobId],
@@ -144,11 +191,19 @@ export default function App() {
     retryDelay: 1000,
   });
 
+  const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
+
   useEffect(() => {
     const parseOutput = async () => {
       try {
         if (output) {
-          let parsed = JSON.parse(output);
+          let parsed = JSON.parse(
+            // output.replace(
+            //   /[\u0000-\u001F\u007F-\u009F]/g,
+            //   (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`
+            // )
+            output
+          );
 
           if (parsed.result.type === "url") {
             const response = await fetch(parsed.result.url);
@@ -195,70 +250,36 @@ export default function App() {
   );
 
   const scrollToBboxOrBlock = useCallback(
-    (chunkIndex: number, blockIndex: number, isBbox: boolean = true) => {
-      // First ensure the accordion is open
-      const accordionItem = document.getElementById(
-        `accordion_item_${chunkIndex}`
-      );
-      if (accordionItem) {
-        const accordionTrigger = accordionItem.querySelector(
-          'h3 > button[data-state="closed"]'
-        );
-        if (accordionTrigger) {
-          (accordionTrigger as HTMLButtonElement).click();
-          // Wait for accordion animation to complete before scrolling
+    (
+      chunkIndex: number,
+      blockIndex: number,
+      isBbox: boolean = true,
+      color: string = "gray"
+    ) => {
+      const blockIds = isBbox
+        ? [`bbox_${chunkIndex}_${blockIndex}`]
+        : [
+            `block_${chunkIndex}_${blockIndex}`,
+            `text_block_${chunkIndex}_${blockIndex}`,
+          ];
+
+      for (const blockId of blockIds) {
+        const element = document.getElementById(blockId);
+        if (element) {
+          element.scrollIntoView({ behavior: "smooth", block: "center" });
+
+          // Add multiple visual effects for better visibility
+          const classesToAdd = isBbox
+            ? ["bg-opacity-50", "outline-4", "animate-pulse"]
+            : [`bg-${color}-500`, "bg-opacity-25", "animate-pulse"];
+
+          element.classList.add(...classesToAdd);
+
+          // Remove classes after animation
           setTimeout(() => {
-            const blockIds = isBbox
-              ? [`bbox_${chunkIndex}_${blockIndex}`]
-              : [
-                  `block_${chunkIndex}_${blockIndex}`,
-                  `text_block_${chunkIndex}_${blockIndex}`,
-                ];
-
-            for (const blockId of blockIds) {
-              const element = document.getElementById(blockId);
-              if (element) {
-                element.scrollIntoView({ behavior: "smooth", block: "center" });
-                const classToTemporarilyAdd = isBbox
-                  ? "bg-blue-500 bg-opacity-50"
-                  : "bg-blue-200";
-                element.classList.add(...classToTemporarilyAdd.split(" "));
-                setTimeout(
-                  () =>
-                    element.classList.remove(
-                      ...classToTemporarilyAdd.split(" ")
-                    ),
-                  2000
-                );
-                break;
-              }
-            }
-          }, 300); // Adjust timing if needed to match your accordion animation duration
-        } else {
-          // Accordion is already open, proceed with scrolling
-          const blockIds = isBbox
-            ? [`bbox_${chunkIndex}_${blockIndex}`]
-            : [
-                `block_${chunkIndex}_${blockIndex}`,
-                `text_block_${chunkIndex}_${blockIndex}`,
-              ];
-
-          for (const blockId of blockIds) {
-            const element = document.getElementById(blockId);
-            if (element) {
-              element.scrollIntoView({ behavior: "smooth", block: "center" });
-              const classToTemporarilyAdd = isBbox
-                ? "bg-blue-500 bg-opacity-50"
-                : "bg-blue-200";
-              element.classList.add(...classToTemporarilyAdd.split(" "));
-              setTimeout(
-                () =>
-                  element.classList.remove(...classToTemporarilyAdd.split(" ")),
-                2000
-              );
-              break;
-            }
-          }
+            element.classList.remove(...classesToAdd);
+          }, 2000);
+          break;
         }
       }
     },
@@ -286,6 +307,75 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [pagination, maxPage, numPages, minPage]);
 
+  const tableSummaries = useMemo(() => {
+    if (jsonOutput?.result?.type !== "full") return [];
+    const tables = jsonOutput.result.chunks.map((chunk) =>
+      chunk.embed
+        .split("\n\n")
+        .map((text) => text.trim())
+        .filter((text) => text.toLowerCase().startsWith("this table"))
+    );
+
+    return jsonOutput.result.chunks.map((chunk, chunkIndex) => {
+      let i = 0;
+      let tableSummaries: { [key: number]: string } = [];
+      chunk.blocks.forEach((block, blockIndex) => {
+        if (block.type === "Table") {
+          tableSummaries[blockIndex] = tables[chunkIndex]![i]!;
+          i++;
+        }
+      });
+      return tableSummaries;
+    });
+  }, [jsonOutput]);
+
+  const blocksByPage = useMemo(() => {
+    if (jsonOutput?.result?.type !== "full" || !jsonOutput?.result?.chunks)
+      return {};
+
+    return jsonOutput.result.chunks.reduce<{
+      [key: number]: {
+        block: components["schemas"]["ParseBlock"];
+        chunkIndex: number;
+        blockIndex: number;
+      }[];
+    }>(
+      (
+        acc: {
+          [key: number]: {
+            block: components["schemas"]["ParseBlock"];
+            chunkIndex: number;
+            blockIndex: number;
+          }[];
+        },
+        chunk,
+        chunkIndex
+      ) => {
+        chunk.blocks.forEach((block, blockIndex) => {
+          const page = block.bbox?.page || 0;
+          if (!acc[page]) acc[page] = [];
+          acc[page].push({ block, chunkIndex, blockIndex });
+        });
+        return acc;
+      },
+      {}
+    );
+  }, [jsonOutput]);
+
+  const downloadJson = (e) => {
+    e.stopPropagation();
+    if (!jsonOutput) return;
+
+    const element = document.createElement("a");
+    element.href = URL.createObjectURL(
+      new Blob([JSON.stringify(jsonOutput, null, 2)], {
+        type: "application/json",
+      })
+    );
+    element.download = `${jsonOutput.job_id}.json`;
+    element.click();
+  };
+
   return (
     <div className="flex flex-col h-screen p-4">
       <Accordion
@@ -296,16 +386,41 @@ export default function App() {
       >
         <AccordionItem value="controls" className="border-none">
           <AccordionTrigger className="hover:no-underline">
-            <h1 className="text-2xl font-semibold">
-              Reducto Local Document Playground
-            </h1>
-          </AccordionTrigger>
-          <AccordionContent>
-            <div className="controls-section space-y-2 px-1">
-              <div className="flex flex-row space-x-2 items-center">
-                <Label htmlFor="pdf-file" className="w-fit whitespace-nowrap">
-                  PDF File:
-                </Label>
+            <div className="flex flex-row justify-between grow items-center space-x-2 pr-6">
+              <div className="flex items-center space-x-4">
+                <h1 className="text-2xl font-semibold">
+                  Reducto Local Document Playground
+                </h1>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button variant="ghost" onClick={downloadJson}>
+                        <Download className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Download JSON Result</p>
+                    </TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger>
+                      <Toggle
+                        pressed={showBlocks}
+                        onPressedChange={setShowBlocks}
+                        onClick={(e) => e.stopPropagation()}
+                        className="ml-2"
+                      >
+                        <LayoutPanelTop className="h-4 w-4" />
+                      </Toggle>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Toggle Block View</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
                 <Input
                   id="pdf-file"
                   type="file"
@@ -313,105 +428,124 @@ export default function App() {
                     setJsonOutput(null);
                     setPdfFile(e.target.files?.[0]);
                   }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-80"
                 />
+                <Button
+                  onClick={(e) => {
+                    if (pdfFile) {
+                      setLoading(true);
+                      uploadFile(apiUrl, pdfFile, apiToken)
+                        .then((out) =>
+                          getJobId(apiUrl, out, apiToken, apiConfig)
+                        )
+                        .then((jobId) => setJobId(jobId))
+                        .catch((err) => {
+                          setLoading(false);
+                          alert(err);
+                        });
+                    }
+                    e.stopPropagation();
+                  }}
+                  disabled={loading}
+                >
+                  {loading ? (
+                    <Loader2Icon className="animate-spin mr-2 h-4 w-4" />
+                  ) : null}
+                  Process Document
+                </Button>
               </div>
-              <Tabs defaultValue="json" className="w-full">
+            </div>
+          </AccordionTrigger>
+
+          <AccordionContent>
+            <div className="controls-section space-y-4 px-1">
+              <Tabs defaultValue="api" className="w-full">
                 <TabsList className="w-full">
-                  <TabsTrigger className="w-full" value="json">
-                    Manual JSON
-                  </TabsTrigger>
                   <TabsTrigger className="w-full" value="api">
-                    Run API
+                    API Configuration
+                  </TabsTrigger>
+                  <TabsTrigger className="w-full" value="json">
+                    Manual JSON Output
                   </TabsTrigger>
                 </TabsList>
-                <TabsContent value="json">
-                  <Input
-                    value={output}
-                    onChange={(e) => setOutput(e.target.value)}
-                    className="w-full"
-                    placeholder="Paste your JSON here"
-                  />
+
+                <TabsContent value="api" className="space-y-4 pt-4">
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="api-url">API URL</Label>
+                      <Input
+                        id="api-url"
+                        type="text"
+                        placeholder="https://v1.api.reducto.ai"
+                        value={apiUrl}
+                        onChange={(e) => setApiUrl(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="api-token">API Token</Label>
+                      <Input
+                        type="password"
+                        id="api-token"
+                        value={apiToken}
+                        onChange={(e) => setApiToken(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="api-token">API Config</Label>
+                      <Textarea
+                        id="api-config"
+                        className="w-full font-mono min-h-[40px] h-[40px]"
+                        value={JSON.stringify(apiConfig, null, 2)}
+                        onChange={(e) =>
+                          setApiConfig(
+                            JSON.parse(
+                              e.target.value
+                            ) as components["schemas"]["AsyncParseConfigNew"]
+                          )
+                        }
+                      />
+                    </div>
+                  </div>
                 </TabsContent>
-                <TabsContent value="api" className="flex flex-col space-y-2">
-                  <div className="flex flex-row space-x-2 items-center">
-                    <Label
-                      htmlFor="api-url"
-                      className="w-fit whitespace-nowrap"
-                    >
-                      API URL:
-                    </Label>
-                    <Input
-                      id="api-url"
-                      type="text"
-                      placeholder="https://v1.api.reducto.ai"
-                      value={apiUrl}
-                      onChange={(e) => setApiUrl(e.target.value)}
+
+                <TabsContent value="json" className="pt-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="json-input">JSON Input</Label>
+                    <Textarea
+                      id="json-input"
+                      value={output}
+                      onChange={(e) => setOutput(e.target.value)}
+                      className="w-full font-mono min-h-[40px] h-[40px]"
+                      placeholder="Paste your JSON here"
                     />
                   </div>
-                  <div className="flex flex-row space-x-2 items-center">
-                    <Label
-                      htmlFor="api-token"
-                      className="w-fit whitespace-nowrap"
-                    >
-                      Token:
-                    </Label>
-                    <Input
-                      type="password"
-                      id="api-token"
-                      className="w-full"
-                      value={apiToken}
-                      onChange={(e) => setApiToken(e.target.value)}
-                    />
-                  </div>
-                  <Button
-                    className="w-full"
-                    onClick={() => {
-                      if (pdfFile) {
-                        setLoading(true);
-                        uploadFile(apiUrl, pdfFile, apiToken)
-                          .then((out) => {
-                            console.log("file_id:", out);
-                            return getJobId(apiUrl, out, apiToken);
-                          })
-                          .then((jobId) => {
-                            setJobId(jobId);
-                          })
-                          .catch((err) => {
-                            setLoading(false);
-                            alert(err);
-                          });
-                      }
-                    }}
-                    disabled={loading}
-                  >
-                    {loading ? (
-                      <Loader2Icon className="animate-spin" />
-                    ) : (
-                      "Run Document"
-                    )}
-                  </Button>
                 </TabsContent>
               </Tabs>
             </div>
           </AccordionContent>
         </AccordionItem>
-        {numPages > MAX_PAGINATION && (
-          <div className="flex-none bg-white z-50 w-full py-4">
-            <div className="flex flex-row items-center w-full justify-between">
-              <Button
-                disabled={minPage === 0}
-                onMouseDown={() => {
-                  if (minPage > 0) {
-                    setPagination(pagination - 1);
-                  }
-                }}
-              >
-                Previous
-              </Button>
+      </Accordion>
+
+      {numPages > MAX_PAGINATION && (
+        <div className="sticky top-0 bg-white py-2 px-4 z-50">
+          <div className="flex flex-row items-center w-full justify-between">
+            <Button
+              disabled={minPage === 0}
+              onMouseDown={() => {
+                if (minPage > 0) {
+                  setPagination(pagination - 1);
+                }
+              }}
+            >
+              Previous
+            </Button>
+            <div className="flex space-x-1">
               {Array.from({ length: maxPage - minPage }, (_, i) => (
                 <Button
                   key={i + minPage}
-                  variant={"ghost"}
+                  variant="ghost"
+                  size="sm"
                   onClick={() => {
                     pageRefs[i + minPage]?.scrollIntoView({
                       behavior: "smooth",
@@ -423,26 +557,26 @@ export default function App() {
                   {i + minPage + 1}
                 </Button>
               ))}
-              <Button
-                disabled={maxPage >= numPages}
-                onMouseDown={() => {
-                  if (maxPage < numPages) {
-                    setPagination(pagination + 1);
-                  }
-                }}
-              >
-                Next
-              </Button>
             </div>
+            <Button
+              disabled={maxPage >= numPages}
+              onMouseDown={() => {
+                if (maxPage < numPages) {
+                  setPagination(pagination + 1);
+                }
+              }}
+            >
+              Next
+            </Button>
           </div>
-        )}
-      </Accordion>
+        </div>
+      )}
 
       <ResizablePanelGroup
         direction="horizontal"
         className="flex-1 overflow-hidden border rounded-lg shadow-sm"
       >
-        <ResizablePanel defaultSize={50} minSize={30}>
+        <ResizablePanel defaultSize={30} minSize={30}>
           <div className="h-full overflow-auto p-4">
             <Document
               file={pdfFile}
@@ -461,6 +595,8 @@ export default function App() {
                     renderTextLayer={false}
                     renderAnnotationLayer={false}
                     className="border rounded-lg overflow-hidden shadow-sm"
+                    scale={4}
+                    renderMode="canvas"
                   >
                     <div className="absolute left-0 top-0 z-20 h-full w-full">
                       {bboxes
@@ -472,7 +608,11 @@ export default function App() {
                                 <div
                                   id={`bbox_${bbox.chunkIndex}_${bbox.blockIndex}`}
                                   key={`bbox_${bbox.chunkIndex}_${bbox.blockIndex}`}
-                                  className="group absolute -z-30 outline outline-2 outline-blue-500 cursor-pointer transition-colors"
+                                  className={`group absolute -z-30 cursor-pointer outline outline-2 outline-${
+                                    bboxTypeColors[bbox.type] || "gray"
+                                  }-500 transition-colors bg-${
+                                    bboxTypeColors[bbox.type] || "gray"
+                                  }-500 bg-opacity-20 hover:bg-opacity-0`}
                                   style={{
                                     top: bbox.top * 100 + "%",
                                     left: bbox.left * 100 + "%",
@@ -483,17 +623,22 @@ export default function App() {
                                     scrollToBboxOrBlock(
                                       bbox.chunkIndex,
                                       bbox.blockIndex,
-                                      false
+                                      false,
+                                      bboxTypeColors[bbox.type]
                                     )
                                   }
                                 >
-                                  <div className="relative -left-[2px] -top-6 hidden w-fit whitespace-nowrap rounded-t-md bg-blue-500 px-2 py-1 text-xs text-white group-hover:block">
+                                  <div
+                                    className={`relative -left-[2px] -top-6 hidden w-fit whitespace-nowrap rounded-t-md bg-${
+                                      bboxTypeColors[bbox.type] || "gray"
+                                    }-500 px-2 py-1 text-xs text-white group-hover:block`}
+                                  >
                                     {bbox.type}
                                   </div>
                                 </div>
                               </HoverCardTrigger>
 
-                              <HoverCardContent className="z-50 mb-8 w-[50vw]">
+                              {/* <HoverCardContent className="z-50 mb-8 w-[50vw]">
                                 {jsonOutput!.result.type === "full" ? (
                                   <Content
                                     block={
@@ -503,7 +648,7 @@ export default function App() {
                                     }
                                   />
                                 ) : null}
-                              </HoverCardContent>
+                              </HoverCardContent> */}
                             </HoverCard>
                           );
                         })}
@@ -517,108 +662,159 @@ export default function App() {
 
         <ResizableHandle withHandle />
 
-        <ResizablePanel defaultSize={50} minSize={30}>
-          <div className="h-full overflow-auto px-4">
+        <ResizablePanel defaultSize={70} minSize={30}>
+          <div className="h-full overflow-auto px-4 py-4">
             {jsonOutput ? (
-              <Accordion
-                type="multiple"
-                defaultValue={jsonOutput!.result.chunks.map(
-                  (_, idx) => `accordion_item_${idx}`
-                )}
-                className="w-full"
-              >
-                {jsonOutput!.result.chunks.map((chunk, idx) => {
-                  const isPageInRange = chunk.blocks.some(
-                    (block) =>
-                      block.bbox.page - 1 >= minPage &&
-                      block.bbox.page - 1 < maxPage
-                  );
-                  if (!isPageInRange) {
-                    return null;
-                  }
-                  return (
-                    <AccordionItem
-                      key={`accordion_item_${idx}`}
-                      value={`accordion_item_${idx}`}
-                      id={`accordion_item_${idx}`}
-                    >
-                      <AccordionTrigger>Chunk {idx + 1}</AccordionTrigger>
-                      <AccordionContent className="flex h-fit flex-col space-y-2">
-                        <Tabs className="w-full" defaultValue="text">
-                          <TabsList className="grid w-full grid-cols-2">
-                            <TabsTrigger value="text">
-                              Concatenated Text
-                            </TabsTrigger>
-                            <TabsTrigger value="blocks">
-                              Individual Blocks
-                            </TabsTrigger>
-                          </TabsList>
-                          <TabsContent value="blocks">
-                            {chunk.blocks.map((c, i) => (
-                              <Card
-                                className="flex flex-col space-y-2 cursor-pointer hover:bg-gray-50 transition-colors [&.bg-blue-200]:!bg-blue-200"
-                                key={`card_${idx}_${i}`}
-                                id={`block_${idx}_${i}`}
-                                onClick={() => {
-                                  const bbox = bboxes.find(
-                                    (b) =>
-                                      b.chunkIndex === idx && b.blockIndex === i
-                                  );
-                                  if (bbox) {
-                                    scrollToBboxOrBlock(idx, i);
+              <div className="space-y-8">
+                {Object.entries(blocksByPage).map(([page, blocks]) => (
+                  <div key={page} className="rounded-lg border bg-card p-4">
+                    <div className="space-y-2">
+                      {blocks.map(
+                        ({ block, chunkIndex, blockIndex }, index) => {
+                          // Add chunk separator if next block is from a different chunk
+                          const nextBlock = blocks[index + 1];
+                          const isChunkBoundary =
+                            nextBlock && nextBlock.chunkIndex !== chunkIndex;
+
+                          return (
+                            <div
+                              key={`block_wrapper_${chunkIndex}_${blockIndex}`}
+                            >
+                              {showBlocks ? (
+                                <Card
+                                  key={`block_${chunkIndex}_${blockIndex}`}
+                                  id={`block_${chunkIndex}_${blockIndex}`}
+                                  className={`flex cursor-pointer flex-col space-y-2 transition-colors duration-1000 hover:bg-gray-50 [&.bg-${
+                                    bboxTypeColors[block.type]
+                                  }-500]:!bg-${bboxTypeColors[block.type]}-500`}
+                                  onClick={() =>
+                                    scrollToBboxOrBlock(
+                                      chunkIndex,
+                                      blockIndex,
+                                      true,
+                                      bboxTypeColors[block.type]
+                                    )
                                   }
-                                }}
-                              >
-                                <CardHeader className="-mb-6 ">
-                                  <Badge className="w-fit bg-blue-500 hover:bg-blue-500">
-                                    {c.type}
-                                  </Badge>
-                                </CardHeader>
-                                <CardContent className="whitespace-pre-line text-wrap">
-                                  {c.content}
-                                </CardContent>
-                              </Card>
-                            ))}
-                          </TabsContent>
-                          <TabsContent value="text">
-                            <Card>
-                              <CardContent className="flex flex-col space-y-4 whitespace-pre-wrap pt-4">
-                                {chunk.enrichment_success ? (
-                                  <div className="overflow-auto whitespace-pre">
-                                    {chunk.enriched}
-                                  </div>
-                                ) : null}
-                                {chunk.blocks.map((block, i: number) =>
-                                  block.bbox.page - 1 >= minPage &&
-                                  block.bbox.page - 1 < maxPage ? (
-                                    <div
-                                      key={i}
-                                      id={`text_block_${idx}_${i}`}
-                                      className="cursor-pointer hover:bg-gray-50 transition-colors"
-                                      onClick={() => {
-                                        const bbox = bboxes.find(
-                                          (b) =>
-                                            b.chunkIndex === idx &&
-                                            b.blockIndex === i
-                                        );
-                                        if (bbox) {
-                                          scrollToBboxOrBlock(idx, i);
-                                        }
-                                      }}
+                                >
+                                  <CardHeader className="-mb-6">
+                                    <Badge
+                                      className={`w-fit bg-${
+                                        bboxTypeColors[block.type] || "gray"
+                                      }-500 hover:bg-${
+                                        bboxTypeColors[block.type] || "gray"
+                                      }-500`}
                                     >
-                                      <Content block={block} />
-                                    </div>
-                                  ) : null
-                                )}
-                              </CardContent>
-                            </Card>
-                          </TabsContent>
-                        </Tabs>
-                      </AccordionContent>
-                    </AccordionItem>
-                  );
-                })}
-              </Accordion>
+                                      {block.type}
+                                    </Badge>
+                                  </CardHeader>
+                                  <CardContent className="whitespace-pre-line text-wrap">
+                                    {block.content}
+                                  </CardContent>
+                                </Card>
+                              ) : (
+                                <div
+                                  key={`text_block_${chunkIndex}_${blockIndex}`}
+                                  id={`text_block_${chunkIndex}_${blockIndex}`}
+                                  className="cursor-pointer rounded-lg p-2 transition-colors hover:bg-gray-50"
+                                  onClick={() =>
+                                    scrollToBboxOrBlock(
+                                      chunkIndex,
+                                      blockIndex,
+                                      true,
+                                      bboxTypeColors[block.type]
+                                    )
+                                  }
+                                >
+                                  <div
+                                    className={`relative ${
+                                      block.type === "Table" ? "pl-6 pt-6" : ""
+                                    }`}
+                                  >
+                                    {tableSummaries[chunkIndex]?.[
+                                      blockIndex
+                                    ] && (
+                                      <div className="absolute left-0 top-0 z-50">
+                                        <TooltipProvider>
+                                          <Tooltip
+                                            open={
+                                              activeTooltip ===
+                                              `${chunkIndex}_${blockIndex}`
+                                            }
+                                          >
+                                            <TooltipTrigger
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                if (
+                                                  activeTooltip ===
+                                                  `${chunkIndex}_${blockIndex}`
+                                                ) {
+                                                  setActiveTooltip(null);
+                                                } else {
+                                                  setActiveTooltip(
+                                                    `${chunkIndex}_${blockIndex}`
+                                                  );
+                                                }
+                                              }}
+                                            >
+                                              <div
+                                                className="animate-glow group relative h-6 w-6"
+                                                style={{
+                                                  animation:
+                                                    "glow 2s ease-in-out infinite alternate",
+                                                  filter:
+                                                    "drop-shadow(0 0 5px var(--reducto-light-purple)) drop-shadow(0 0 8px var(--reducto-light-purple))",
+                                                }}
+                                              >
+                                                <Sparkles
+                                                  className="animate-glow absolute h-6 w-6"
+                                                  style={{
+                                                    color:
+                                                      "var(--reducto-mid-purple)",
+                                                  }}
+                                                />
+                                              </div>
+                                            </TooltipTrigger>
+                                            <TooltipContent
+                                              onPointerDownOutside={() =>
+                                                setActiveTooltip(null)
+                                              }
+                                              className="max-w-[400px] z-50"
+                                            >
+                                              <div className="flex flex-col space-y-1">
+                                                <div className="flex items-center space-x-2">
+                                                  <Sparkles className="h-4 w-4" />
+                                                  <span className="font-bold">
+                                                    Reducto AI Table Summary
+                                                  </span>
+                                                </div>
+                                                <p>
+                                                  {
+                                                    tableSummaries[chunkIndex][
+                                                      blockIndex
+                                                    ]
+                                                  }
+                                                </p>
+                                              </div>
+                                            </TooltipContent>
+                                          </Tooltip>
+                                        </TooltipProvider>
+                                      </div>
+                                    )}
+                                    <Content block={block} />
+                                  </div>
+                                </div>
+                              )}
+                              {isChunkBoundary && (
+                                <div className="my-4 border-t border-dashed border-gray-200" />
+                              )}
+                            </div>
+                          );
+                        }
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
             ) : null}
           </div>
         </ResizablePanel>
@@ -650,16 +846,35 @@ export function Content({ block }: { block: any }) {
     ))
     .with("Figure", () => {
       if (
-        block.content.includes("AI summary of figure: ") &&
+        block.content.startsWith("This image shows") &&
         block.content.replace("AI summary of figure: ", "").trim().length > 0
       ) {
         return (
-          <div className="border border-black p-2">
-            <div className="flex flex-row items-center space-x-2">
-              <b>AI Figure Summary</b>
+          <>
+            {/* @ts-ignore */}
+            {block.image_url &&
+            block.bbox?.width > 0.1 &&
+            block.bbox?.height > 0.1 ? (
+              <img
+                // @ts-ignore
+                src={block.image_url}
+                alt="Figure"
+                style={{
+                  maxWidth: "100%",
+                  height: "auto",
+                  maxHeight: "300px",
+                  objectFit: "contain",
+                }}
+              />
+            ) : null}
+
+            <div className="border border-black p-2">
+              <div className="flex flex-row items-center space-x-2">
+                <BotIcon /> <b>AI Figure Summary</b>
+              </div>
+              {block.content.replace("AI summary of figure: ", "")}
             </div>
-            {block.content.replace("AI summary of figure: ", "")}
-          </div>
+          </>
         );
       } else if (block.content.startsWith("AI Extracted Chart Data:")) {
         const data = block.content
@@ -695,6 +910,29 @@ export function Content({ block }: { block: any }) {
               </tr>
             ))}
           </table>
+        );
+      } else if (block.content.trim().length > 0) {
+        return (
+          <div className="flex flex-col items-start space-y-2">
+            {/* @ts-ignore */}
+            {block.image_url ? (
+              <img
+                // @ts-ignore
+                src={block.image_url}
+                alt="Figure"
+                style={{
+                  maxWidth: "100%",
+                  height: "auto",
+                  maxHeight: "300px",
+                  objectFit: "contain",
+                }}
+              />
+            ) : null}
+            <div className="rounded-lg border p-2">
+              <b>Figure Text:</b> <br />
+              {block.content}
+            </div>
+          </div>
         );
       }
       return null;
