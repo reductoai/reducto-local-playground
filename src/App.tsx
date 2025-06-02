@@ -27,6 +27,7 @@ import {
   LayoutPanelTop,
   Loader2Icon,
   Sparkles,
+  Copy,
 } from "lucide-react";
 import {
   ResizableHandle,
@@ -42,6 +43,11 @@ import {
 import { bboxTypeColors } from "./lib/colors";
 import { Toggle } from "./components/ui/toggle";
 import { Textarea } from "./components/ui/textarea";
+import DocumentLayout from "./components/document-layout";
+import {
+  saveDocumentToStore,
+  loadDocumentFromStore,
+} from "./lib/document-store";
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
 
@@ -159,674 +165,9 @@ const defaultParseConfig: ParseConfig = {
   experimental_options: {
     return_figure_images: true,
     return_table_images: true,
+    rotate_images: true,
   },
 };
-
-export default function App() {
-  const [pdfFile, setPdfFile] = useState<File | undefined>(undefined);
-  const [numPages, setNumPages] = useState<number>(0);
-  const [apiUrl, setApiUrl] = useState<string>(
-    import.meta.env.VITE_API_URL ?? "https://platform.reducto.ai"
-  );
-  const [apiToken, setApiToken] = useState<string>(
-    import.meta.env.VITE_API_TOKEN ?? ""
-  );
-  const [loading, setLoading] = useState<boolean>(false);
-  const [output, setOutput] = useState<string>("");
-  const [pagination, setPagination] = useState<number>(0);
-  const [showBlocks, setShowBlocks] = useState<boolean>(false);
-
-  const minPage = Math.max(0, pagination * MAX_PAGINATION);
-  const maxPage = Math.min((pagination + 1) * MAX_PAGINATION, numPages);
-  const pageRefs = useRef<HTMLCanvasElement[]>([]);
-
-  const [jsonOutput, setJsonOutput] = useState<
-    components["schemas"]["ParseResponse"] | null
-  >(null);
-  const [jobId, setJobId] = useState<string | null>(null);
-  const [apiConfig, setApiConfig] = useState<ParseConfig>(defaultParseConfig);
-
-  const { data: jobData } = useQuery({
-    queryKey: ["jobStatus", jobId],
-    queryFn: () => fetchJobStatus(apiUrl, jobId!, apiToken),
-    enabled: !!jobId,
-    refetchInterval: 1000,
-    refetchIntervalInBackground: true,
-    retry: 15 * 60, // Timeout after 15 minutes
-    retryDelay: 1000,
-  });
-
-  const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
-
-  useEffect(() => {
-    const parseOutput = async () => {
-      try {
-        if (output) {
-          let parsed = JSON.parse(
-            // output.replace(
-            //   /[\u0000-\u001F\u007F-\u009F]/g,
-            //   (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`
-            // )
-            output
-          );
-
-          if (parsed.result.type === "url") {
-            const response = await fetch(parsed.result.url);
-            const json = await response.json();
-            parsed.result = json;
-            setJsonOutput(parsed);
-          } else if (parsed.result.type === "full") {
-            setJsonOutput(parsed);
-          }
-        }
-      } catch (error) {
-        console.error("Failed to parse output:", error);
-        setJsonOutput(null);
-      }
-    };
-
-    parseOutput();
-  }, [output]);
-
-  useEffect(() => {
-    if (jobData) {
-      if (jobData.status === "Failed") {
-        console.error(`Job ${jobId} failed:`, jobData.reason);
-      }
-      setOutput(JSON.stringify(jobData.result));
-      setLoading(false);
-      setJobId(null);
-    }
-  }, [jobData]);
-
-  const bboxes = useMemo(
-    () =>
-      jsonOutput?.result.type === "full"
-        ? jsonOutput?.result.chunks.flatMap((r, chunkIndex) =>
-            r.blocks.flatMap((b, blockIndex) => ({
-              ...b.bbox,
-              type: b.type,
-              chunkIndex,
-              blockIndex,
-            }))
-          )
-        : [],
-    [jsonOutput]
-  );
-
-  const scrollToBboxOrBlock = useCallback(
-    (
-      chunkIndex: number,
-      blockIndex: number,
-      isBbox: boolean = true,
-      color: string = "gray"
-    ) => {
-      const blockIds = isBbox
-        ? [`bbox_${chunkIndex}_${blockIndex}`]
-        : [
-            `block_${chunkIndex}_${blockIndex}`,
-            `text_block_${chunkIndex}_${blockIndex}`,
-          ];
-
-      for (const blockId of blockIds) {
-        const element = document.getElementById(blockId);
-        if (element) {
-          element.scrollIntoView({ behavior: "smooth", block: "center" });
-
-          // Add multiple visual effects for better visibility
-          const classesToAdd = isBbox
-            ? ["bg-opacity-50", "outline-4", "animate-pulse"]
-            : [`bg-${color}-500`, "bg-opacity-25", "animate-pulse"];
-
-          element.classList.add(...classesToAdd);
-
-          // Remove classes after animation
-          setTimeout(() => {
-            element.classList.remove(...classesToAdd);
-          }, 2000);
-          break;
-        }
-      }
-    },
-    []
-  );
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Check if the active element is an input or textarea
-      const activeElement = document.activeElement;
-      const isInputActive =
-        activeElement instanceof HTMLInputElement ||
-        activeElement instanceof HTMLTextAreaElement;
-
-      if (!isInputActive) {
-        if (e.key === "ArrowRight" && maxPage < numPages) {
-          setPagination(pagination + 1);
-        } else if (e.key === "ArrowLeft" && minPage > 0) {
-          setPagination(pagination - 1);
-        }
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [pagination, maxPage, numPages, minPage]);
-
-  const tableSummaries = useMemo(() => {
-    if (jsonOutput?.result?.type !== "full") return [];
-    const tables = jsonOutput.result.chunks.map((chunk) =>
-      chunk.embed
-        .split("\n\n")
-        .map((text) => text.trim())
-        .filter((text) => text.toLowerCase().startsWith("this table"))
-    );
-
-    return jsonOutput.result.chunks.map((chunk, chunkIndex) => {
-      let i = 0;
-      let tableSummaries: { [key: number]: string } = [];
-      chunk.blocks.forEach((block, blockIndex) => {
-        if (block.type === "Table") {
-          tableSummaries[blockIndex] = tables[chunkIndex]![i]!;
-          i++;
-        }
-      });
-      return tableSummaries;
-    });
-  }, [jsonOutput]);
-
-  const blocksByPage = useMemo(() => {
-    if (jsonOutput?.result?.type !== "full" || !jsonOutput?.result?.chunks)
-      return {};
-
-    return jsonOutput.result.chunks.reduce<{
-      [key: number]: {
-        block: components["schemas"]["ParseBlock"];
-        chunkIndex: number;
-        blockIndex: number;
-      }[];
-    }>(
-      (
-        acc: {
-          [key: number]: {
-            block: components["schemas"]["ParseBlock"];
-            chunkIndex: number;
-            blockIndex: number;
-          }[];
-        },
-        chunk,
-        chunkIndex
-      ) => {
-        chunk.blocks.forEach((block, blockIndex) => {
-          const page = block.bbox?.page || 0;
-          if (!acc[page]) acc[page] = [];
-          acc[page].push({ block, chunkIndex, blockIndex });
-        });
-        return acc;
-      },
-      {}
-    );
-  }, [jsonOutput]);
-
-  const downloadJson = (e) => {
-    e.stopPropagation();
-    if (!jsonOutput) return;
-
-    const element = document.createElement("a");
-    element.href = URL.createObjectURL(
-      new Blob([JSON.stringify(jsonOutput, null, 2)], {
-        type: "application/json",
-      })
-    );
-    element.download = `${jsonOutput.job_id}.json`;
-    element.click();
-  };
-
-  return (
-    <div className="flex flex-col h-screen p-4">
-      <Accordion
-        type="single"
-        collapsible
-        defaultValue="controls"
-        className="flex-none"
-      >
-        <AccordionItem value="controls" className="border-none">
-          <AccordionTrigger className="hover:no-underline">
-            <div className="flex flex-row justify-between grow items-center space-x-2 pr-6">
-              <div className="flex items-center space-x-4">
-                <h1 className="text-2xl font-semibold">
-                  Reducto Local Document Playground
-                </h1>
-              </div>
-
-              <div className="flex items-center space-x-2">
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button variant="ghost" onClick={downloadJson}>
-                        <Download className="h-4 w-4" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Download JSON Result</p>
-                    </TooltipContent>
-                  </Tooltip>
-                  <Tooltip>
-                    <TooltipTrigger>
-                      <Toggle
-                        pressed={showBlocks}
-                        onPressedChange={setShowBlocks}
-                        onClick={(e) => e.stopPropagation()}
-                        className="ml-2"
-                      >
-                        <LayoutPanelTop className="h-4 w-4" />
-                      </Toggle>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Toggle Block View</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-                <Input
-                  id="pdf-file"
-                  type="file"
-                  onChange={(e) => {
-                    setJsonOutput(null);
-                    setPdfFile(e.target.files?.[0]);
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                  className="w-80"
-                />
-                <Button
-                  onClick={(e) => {
-                    if (pdfFile) {
-                      setLoading(true);
-                      uploadFile(apiUrl, pdfFile, apiToken)
-                        .then((out) =>
-                          getJobId(apiUrl, out, apiToken, apiConfig)
-                        )
-                        .then((jobId) => setJobId(jobId))
-                        .catch((err) => {
-                          setLoading(false);
-                          alert(err);
-                        });
-                    }
-                    e.stopPropagation();
-                  }}
-                  disabled={loading}
-                >
-                  {loading ? (
-                    <Loader2Icon className="animate-spin mr-2 h-4 w-4" />
-                  ) : null}
-                  Process Document
-                </Button>
-              </div>
-            </div>
-          </AccordionTrigger>
-
-          <AccordionContent>
-            <div className="controls-section space-y-4 px-1">
-              <Tabs defaultValue="api" className="w-full">
-                <TabsList className="w-full">
-                  <TabsTrigger className="w-full" value="api">
-                    API Configuration
-                  </TabsTrigger>
-                  <TabsTrigger className="w-full" value="json">
-                    Manual JSON Output
-                  </TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="api" className="space-y-4 pt-4">
-                  <div className="grid grid-cols-3 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="api-url">API URL</Label>
-                      <Input
-                        id="api-url"
-                        type="text"
-                        placeholder="https://v1.api.reducto.ai"
-                        value={apiUrl}
-                        onChange={(e) => setApiUrl(e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="api-token">API Token</Label>
-                      <Input
-                        type="password"
-                        id="api-token"
-                        value={apiToken}
-                        onChange={(e) => setApiToken(e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="api-token">API Config</Label>
-                      <Textarea
-                        id="api-config"
-                        className="w-full font-mono min-h-[40px] h-[40px]"
-                        value={JSON.stringify(apiConfig, null, 2)}
-                        onChange={(e) =>
-                          setApiConfig(
-                            JSON.parse(
-                              e.target.value
-                            ) as components["schemas"]["AsyncParseConfigNew"]
-                          )
-                        }
-                      />
-                    </div>
-                  </div>
-                </TabsContent>
-
-                <TabsContent value="json" className="pt-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="json-input">JSON Input</Label>
-                    <Textarea
-                      id="json-input"
-                      value={output}
-                      onChange={(e) => setOutput(e.target.value)}
-                      className="w-full font-mono min-h-[40px] h-[40px]"
-                      placeholder="Paste your JSON here"
-                    />
-                  </div>
-                </TabsContent>
-              </Tabs>
-            </div>
-          </AccordionContent>
-        </AccordionItem>
-      </Accordion>
-
-      {numPages > MAX_PAGINATION && (
-        <div className="sticky top-0 bg-white py-2 px-4 z-50">
-          <div className="flex flex-row items-center w-full justify-between">
-            <Button
-              disabled={minPage === 0}
-              onMouseDown={() => {
-                if (minPage > 0) {
-                  setPagination(pagination - 1);
-                }
-              }}
-            >
-              Previous
-            </Button>
-            <div className="flex space-x-1">
-              {Array.from({ length: maxPage - minPage }, (_, i) => (
-                <Button
-                  key={i + minPage}
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    pageRefs[i + minPage]?.scrollIntoView({
-                      behavior: "smooth",
-                      block: "center",
-                      inline: "center",
-                    });
-                  }}
-                >
-                  {i + minPage + 1}
-                </Button>
-              ))}
-            </div>
-            <Button
-              disabled={maxPage >= numPages}
-              onMouseDown={() => {
-                if (maxPage < numPages) {
-                  setPagination(pagination + 1);
-                }
-              }}
-            >
-              Next
-            </Button>
-          </div>
-        </div>
-      )}
-
-      <ResizablePanelGroup
-        direction="horizontal"
-        className="flex-1 overflow-hidden border rounded-lg shadow-sm"
-      >
-        <ResizablePanel defaultSize={30} minSize={30}>
-          <div className="h-full overflow-auto p-4">
-            <Document
-              file={pdfFile}
-              onLoadSuccess={(e) => {
-                setPagination(0);
-                setNumPages(e.numPages);
-              }}
-              className="space-y-4"
-            >
-              {Array.from({ length: numPages }, (_, i) =>
-                i >= minPage && i < maxPage ? (
-                  <Page
-                    canvasRef={(el) => (pageRefs[i] = el)}
-                    key={`page_${i}`}
-                    pageNumber={i + 1}
-                    renderTextLayer={false}
-                    renderAnnotationLayer={false}
-                    className="border rounded-lg overflow-hidden shadow-sm"
-                    scale={4}
-                    renderMode="canvas"
-                  >
-                    <div className="absolute left-0 top-0 z-20 h-full w-full">
-                      {bboxes
-                        ?.filter((bbox) => bbox.page === i + 1)
-                        .map((bbox, i) => {
-                          return (
-                            <HoverCard key={i}>
-                              <HoverCardTrigger asChild>
-                                <div
-                                  id={`bbox_${bbox.chunkIndex}_${bbox.blockIndex}`}
-                                  key={`bbox_${bbox.chunkIndex}_${bbox.blockIndex}`}
-                                  className={`group absolute -z-30 cursor-pointer outline outline-2 outline-${
-                                    bboxTypeColors[bbox.type] || "gray"
-                                  }-500 transition-colors bg-${
-                                    bboxTypeColors[bbox.type] || "gray"
-                                  }-500 bg-opacity-20 hover:bg-opacity-0`}
-                                  style={{
-                                    top: bbox.top * 100 + "%",
-                                    left: bbox.left * 100 + "%",
-                                    width: bbox.width * 100 + "%",
-                                    height: bbox.height * 100 + "%",
-                                  }}
-                                  onClick={() =>
-                                    scrollToBboxOrBlock(
-                                      bbox.chunkIndex,
-                                      bbox.blockIndex,
-                                      false,
-                                      bboxTypeColors[bbox.type]
-                                    )
-                                  }
-                                >
-                                  <div
-                                    className={`relative -left-[2px] -top-6 hidden w-fit whitespace-nowrap rounded-t-md bg-${
-                                      bboxTypeColors[bbox.type] || "gray"
-                                    }-500 px-2 py-1 text-xs text-white group-hover:block`}
-                                  >
-                                    {bbox.type}
-                                  </div>
-                                </div>
-                              </HoverCardTrigger>
-
-                              {/* <HoverCardContent className="z-50 mb-8 w-[50vw]">
-                                {jsonOutput!.result.type === "full" ? (
-                                  <Content
-                                    block={
-                                      jsonOutput!.result.chunks[
-                                        bbox.chunkIndex
-                                      ]!.blocks[bbox.blockIndex]!
-                                    }
-                                  />
-                                ) : null}
-                              </HoverCardContent> */}
-                            </HoverCard>
-                          );
-                        })}
-                    </div>
-                  </Page>
-                ) : null
-              )}
-            </Document>
-          </div>
-        </ResizablePanel>
-
-        <ResizableHandle withHandle />
-
-        <ResizablePanel defaultSize={70} minSize={30}>
-          <div className="h-full overflow-auto px-4 py-4">
-            {jsonOutput ? (
-              <div className="space-y-8">
-                {Object.entries(blocksByPage).map(([page, blocks]) => (
-                  <div key={page} className="rounded-lg border bg-card p-4">
-                    <div className="space-y-2">
-                      {blocks.map(
-                        ({ block, chunkIndex, blockIndex }, index) => {
-                          // Add chunk separator if next block is from a different chunk
-                          const nextBlock = blocks[index + 1];
-                          const isChunkBoundary =
-                            nextBlock && nextBlock.chunkIndex !== chunkIndex;
-
-                          return (
-                            <div
-                              key={`block_wrapper_${chunkIndex}_${blockIndex}`}
-                            >
-                              {showBlocks ? (
-                                <Card
-                                  key={`block_${chunkIndex}_${blockIndex}`}
-                                  id={`block_${chunkIndex}_${blockIndex}`}
-                                  className={`flex cursor-pointer flex-col space-y-2 transition-colors duration-1000 hover:bg-gray-50 [&.bg-${
-                                    bboxTypeColors[block.type]
-                                  }-500]:!bg-${bboxTypeColors[block.type]}-500`}
-                                  onClick={() =>
-                                    scrollToBboxOrBlock(
-                                      chunkIndex,
-                                      blockIndex,
-                                      true,
-                                      bboxTypeColors[block.type]
-                                    )
-                                  }
-                                >
-                                  <CardHeader className="-mb-6">
-                                    <Badge
-                                      className={`w-fit bg-${
-                                        bboxTypeColors[block.type] || "gray"
-                                      }-500 hover:bg-${
-                                        bboxTypeColors[block.type] || "gray"
-                                      }-500`}
-                                    >
-                                      {block.type}
-                                    </Badge>
-                                  </CardHeader>
-                                  <CardContent className="whitespace-pre-line text-wrap">
-                                    {block.content}
-                                  </CardContent>
-                                </Card>
-                              ) : (
-                                <div
-                                  key={`text_block_${chunkIndex}_${blockIndex}`}
-                                  id={`text_block_${chunkIndex}_${blockIndex}`}
-                                  className="cursor-pointer rounded-lg p-2 transition-colors hover:bg-gray-50"
-                                  onClick={() =>
-                                    scrollToBboxOrBlock(
-                                      chunkIndex,
-                                      blockIndex,
-                                      true,
-                                      bboxTypeColors[block.type]
-                                    )
-                                  }
-                                >
-                                  <div
-                                    className={`relative ${
-                                      block.type === "Table" ? "pl-6 pt-6" : ""
-                                    }`}
-                                  >
-                                    {tableSummaries[chunkIndex]?.[
-                                      blockIndex
-                                    ] && (
-                                      <div className="absolute left-0 top-0 z-50">
-                                        <TooltipProvider>
-                                          <Tooltip
-                                            open={
-                                              activeTooltip ===
-                                              `${chunkIndex}_${blockIndex}`
-                                            }
-                                          >
-                                            <TooltipTrigger
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                if (
-                                                  activeTooltip ===
-                                                  `${chunkIndex}_${blockIndex}`
-                                                ) {
-                                                  setActiveTooltip(null);
-                                                } else {
-                                                  setActiveTooltip(
-                                                    `${chunkIndex}_${blockIndex}`
-                                                  );
-                                                }
-                                              }}
-                                            >
-                                              <div
-                                                className="animate-glow group relative h-6 w-6"
-                                                style={{
-                                                  animation:
-                                                    "glow 2s ease-in-out infinite alternate",
-                                                  filter:
-                                                    "drop-shadow(0 0 5px var(--reducto-light-purple)) drop-shadow(0 0 8px var(--reducto-light-purple))",
-                                                }}
-                                              >
-                                                <Sparkles
-                                                  className="animate-glow absolute h-6 w-6"
-                                                  style={{
-                                                    color:
-                                                      "var(--reducto-mid-purple)",
-                                                  }}
-                                                />
-                                              </div>
-                                            </TooltipTrigger>
-                                            <TooltipContent
-                                              onPointerDownOutside={() =>
-                                                setActiveTooltip(null)
-                                              }
-                                              className="max-w-[400px] z-50"
-                                            >
-                                              <div className="flex flex-col space-y-1">
-                                                <div className="flex items-center space-x-2">
-                                                  <Sparkles className="h-4 w-4" />
-                                                  <span className="font-bold">
-                                                    Reducto AI Table Summary
-                                                  </span>
-                                                </div>
-                                                <p>
-                                                  {
-                                                    tableSummaries[chunkIndex][
-                                                      blockIndex
-                                                    ]
-                                                  }
-                                                </p>
-                                              </div>
-                                            </TooltipContent>
-                                          </Tooltip>
-                                        </TooltipProvider>
-                                      </div>
-                                    )}
-                                    <Content block={block} />
-                                  </div>
-                                </div>
-                              )}
-                              {isChunkBoundary && (
-                                <div className="my-4 border-t border-dashed border-gray-200" />
-                              )}
-                            </div>
-                          );
-                        }
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        </ResizablePanel>
-      </ResizablePanelGroup>
-    </div>
-  );
-}
 
 export function Content({ block }: { block: any }) {
   return match(block.type)
@@ -951,4 +292,496 @@ export function Content({ block }: { block: any }) {
     .otherwise(() => (
       <p className="mb-2 whitespace-pre-wrap">{block.content}</p>
     ));
+}
+
+export default function App() {
+  const [pdfFile, setPdfFile] = useState<File | undefined>(undefined);
+  const [numPages, setNumPages] = useState<number>(0);
+  const [apiUrl, setApiUrl] = useState<string>(
+    import.meta.env.VITE_API_URL ?? "https://platform.reducto.ai"
+  );
+  const [apiToken, setApiToken] = useState<string>(
+    import.meta.env.VITE_API_TOKEN ?? ""
+  );
+  const [loading, setLoading] = useState<boolean>(false);
+  const [output, setOutput] = useState<string>("");
+  const [pagination, setPagination] = useState<number>(0);
+  const [showBlocks, setShowBlocks] = useState<boolean>(false);
+  const [jsonOutput, setJsonOutput] = useState<
+    components["schemas"]["ParseResponse"] | null
+  >(null);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [apiConfig, setApiConfig] = useState<ParseConfig>(defaultParseConfig);
+  const [activeTab, setActiveTab] = useState<"config" | "result">("config");
+  const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
+
+  // Load stored document on mount
+  useEffect(() => {
+    const storedFile = loadDocumentFromStore();
+    if (storedFile) {
+      setPdfFile(storedFile);
+    }
+  }, []);
+
+  // Save document to storage when file changes
+  useEffect(() => {
+    if (pdfFile) {
+      saveDocumentToStore(pdfFile);
+    }
+  }, [pdfFile]);
+
+  const { data: jobData } = useQuery({
+    queryKey: ["jobStatus", jobId],
+    queryFn: () => fetchJobStatus(apiUrl, jobId!, apiToken),
+    enabled: !!jobId,
+    refetchInterval: 1000,
+    refetchIntervalInBackground: true,
+    retry: 15 * 60, // Timeout after 15 minutes
+    retryDelay: 1000,
+  });
+
+  useEffect(() => {
+    const parseOutput = async () => {
+      try {
+        if (output) {
+          let parsed = JSON.parse(output);
+
+          if (parsed.result.type === "url") {
+            const response = await fetch(parsed.result.url);
+            const json = await response.json();
+            parsed.result = json;
+            setJsonOutput(parsed);
+          } else if (parsed.result.type === "full") {
+            setJsonOutput(parsed);
+          }
+        }
+      } catch (error) {
+        console.error("Failed to parse output:", error);
+        setJsonOutput(null);
+      }
+    };
+
+    parseOutput();
+  }, [output]);
+
+  useEffect(() => {
+    if (jobData) {
+      if (jobData.status === "Failed") {
+        console.error(`Job ${jobId} failed:`, jobData.reason);
+      }
+      setOutput(JSON.stringify(jobData.result));
+      setLoading(false);
+      setJobId(null);
+      setActiveTab("result"); // Switch to result tab when done
+    }
+  }, [jobData]);
+
+  const onProcessDocument = useCallback(async () => {
+    if (pdfFile) {
+      setLoading(true);
+      try {
+        const fileId = await uploadFile(apiUrl, pdfFile, apiToken);
+        const jobId = await getJobId(apiUrl, fileId, apiToken, apiConfig);
+        setJobId(jobId);
+      } catch (err) {
+        setLoading(false);
+        alert(err);
+      }
+    }
+  }, [pdfFile, apiUrl, apiToken, apiConfig]);
+
+  const scrollToBboxOrBlock = useCallback(
+    (
+      chunkIndex: number,
+      blockIndex: number,
+      isBbox: boolean = true,
+      color: string = "gray"
+    ) => {
+      const blockIds = isBbox
+        ? [`bbox_${chunkIndex}_${blockIndex}`]
+        : [
+            `block_${chunkIndex}_${blockIndex}`,
+            `text_block_${chunkIndex}_${blockIndex}`,
+          ];
+
+      for (const blockId of blockIds) {
+        const element = document.getElementById(blockId);
+        if (element) {
+          element.scrollIntoView({ behavior: "smooth", block: "center" });
+
+          // Add multiple visual effects for better visibility
+          const classesToAdd = isBbox
+            ? ["bg-opacity-50", "outline-4", "animate-pulse"]
+            : [`bg-${color}-500`, "bg-opacity-25", "animate-pulse"];
+
+          element.classList.add(...classesToAdd);
+
+          // Remove classes after animation
+          setTimeout(() => {
+            element.classList.remove(...classesToAdd);
+          }, 2000);
+          break;
+        }
+      }
+    },
+    []
+  );
+
+  const tableSummaries = useMemo(() => {
+    if (jsonOutput?.result?.type !== "full") return [];
+    const tables = jsonOutput.result.chunks.map((chunk) =>
+      chunk.embed
+        .split("\n\n")
+        .map((text) => text.trim())
+        .filter((text) => text.toLowerCase().startsWith("this table"))
+    );
+
+    return jsonOutput.result.chunks.map((chunk, chunkIndex) => {
+      let i = 0;
+      let tableSummaries: { [key: number]: string } = {};
+      chunk.blocks.forEach((block, blockIndex) => {
+        if (block.type === "Table") {
+          tableSummaries[blockIndex] = tables[chunkIndex]![i]!;
+          i++;
+        }
+      });
+      return tableSummaries;
+    });
+  }, [jsonOutput]);
+
+  const blocksByPage = useMemo(() => {
+    if (jsonOutput?.result?.type !== "full" || !jsonOutput?.result?.chunks)
+      return {};
+
+    return jsonOutput.result.chunks.reduce<{
+      [key: number]: {
+        block: components["schemas"]["ParseBlock"];
+        chunkIndex: number;
+        blockIndex: number;
+      }[];
+    }>(
+      (
+        acc: {
+          [key: number]: {
+            block: components["schemas"]["ParseBlock"];
+            chunkIndex: number;
+            blockIndex: number;
+          }[];
+        },
+        chunk,
+        chunkIndex
+      ) => {
+        chunk.blocks.forEach((block, blockIndex) => {
+          const page = block.bbox?.page || 0;
+          if (!acc[page]) acc[page] = [];
+          acc[page].push({ block, chunkIndex, blockIndex });
+        });
+        return acc;
+      },
+      {}
+    );
+  }, [jsonOutput]);
+
+  const accordionContent = (
+    <Tabs defaultValue="api" className="w-full">
+      <TabsList className="w-full">
+        <TabsTrigger className="w-full" value="api">
+          API Configuration
+        </TabsTrigger>
+        <TabsTrigger className="w-full" value="json">
+          Manual JSON Output
+        </TabsTrigger>
+      </TabsList>
+
+      <TabsContent value="api" className="space-y-4 pt-4">
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="api-url">API URL</Label>
+            <input
+              id="api-url"
+              type="text"
+              placeholder="https://v1.api.reducto.ai"
+              value={apiUrl}
+              onChange={(e) => setApiUrl(e.target.value)}
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="api-token">API Token</Label>
+            <input
+              type="password"
+              id="api-token"
+              value={apiToken}
+              onChange={(e) => setApiToken(e.target.value)}
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            />
+          </div>
+        </div>
+      </TabsContent>
+
+      <TabsContent value="json" className="pt-4">
+        <div className="space-y-2">
+          <Label htmlFor="json-input">JSON Input</Label>
+          <Textarea
+            id="json-input"
+            value={output}
+            onChange={(e) => setOutput(e.target.value)}
+            className="w-full font-mono min-h-[40px] h-[40px]"
+            placeholder="Paste your JSON here"
+          />
+        </div>
+      </TabsContent>
+    </Tabs>
+  );
+
+  const rightPanelContent = (
+    <div className="h-full flex flex-col">
+      {/* Sticky tabs */}
+      <div className="flex-none border-b bg-white">
+        <Tabs
+          value={activeTab}
+          onValueChange={(value) => setActiveTab(value as "config" | "result")}
+          className="w-full"
+        >
+          <TabsList className="w-full">
+            <TabsTrigger className="w-full" value="config">
+              Config
+            </TabsTrigger>
+            <TabsTrigger className="w-full" value="result">
+              Result
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </div>
+
+      {/* Scrollable content */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="p-4">
+          {activeTab === "config" && (
+            <div className="space-y-6">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="api-config" className="text-lg font-semibold">
+                    API Config
+                  </Label>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() =>
+                      navigator.clipboard.writeText(
+                        JSON.stringify(apiConfig, null, 2)
+                      )
+                    }
+                  >
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                </div>
+                <Textarea
+                  id="api-config"
+                  className="w-full font-mono min-h-[400px] text-sm"
+                  value={JSON.stringify(apiConfig, null, 2)}
+                  onChange={(e) => {
+                    try {
+                      setApiConfig(JSON.parse(e.target.value));
+                    } catch {
+                      // Invalid JSON, don't update
+                    }
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {activeTab === "result" && (
+            <div>
+              {jsonOutput ? (
+                <div className="space-y-8">
+                  {Object.entries(blocksByPage).map(([page, blocks]) => (
+                    <div key={page} className="rounded-lg border bg-card p-4">
+                      <div className="space-y-2">
+                        {blocks.map(
+                          ({ block, chunkIndex, blockIndex }, index) => {
+                            // Add chunk separator if next block is from a different chunk
+                            const nextBlock = blocks[index + 1];
+                            const isChunkBoundary =
+                              nextBlock && nextBlock.chunkIndex !== chunkIndex;
+
+                            return (
+                              <div
+                                key={`block_wrapper_${chunkIndex}_${blockIndex}`}
+                              >
+                                {showBlocks ? (
+                                  <Card
+                                    key={`block_${chunkIndex}_${blockIndex}`}
+                                    id={`block_${chunkIndex}_${blockIndex}`}
+                                    className={`flex cursor-pointer flex-col space-y-2 transition-colors duration-1000 hover:bg-gray-50 [&.bg-${
+                                      bboxTypeColors[block.type]
+                                    }-500]:!bg-${
+                                      bboxTypeColors[block.type]
+                                    }-500`}
+                                    onClick={() =>
+                                      scrollToBboxOrBlock(
+                                        chunkIndex,
+                                        blockIndex,
+                                        true,
+                                        bboxTypeColors[block.type]
+                                      )
+                                    }
+                                  >
+                                    <CardHeader className="-mb-6">
+                                      <Badge
+                                        className={`w-fit bg-${
+                                          bboxTypeColors[block.type] || "gray"
+                                        }-500 hover:bg-${
+                                          bboxTypeColors[block.type] || "gray"
+                                        }-500`}
+                                      >
+                                        {block.type}
+                                      </Badge>
+                                    </CardHeader>
+                                    <CardContent className="whitespace-pre-line text-wrap">
+                                      {block.content}
+                                    </CardContent>
+                                  </Card>
+                                ) : (
+                                  <div
+                                    key={`text_block_${chunkIndex}_${blockIndex}`}
+                                    id={`text_block_${chunkIndex}_${blockIndex}`}
+                                    className="cursor-pointer rounded-lg p-2 transition-colors hover:bg-gray-50"
+                                    onClick={() =>
+                                      scrollToBboxOrBlock(
+                                        chunkIndex,
+                                        blockIndex,
+                                        true,
+                                        bboxTypeColors[block.type]
+                                      )
+                                    }
+                                  >
+                                    <div
+                                      className={`relative ${
+                                        block.type === "Table"
+                                          ? "pl-6 pt-6"
+                                          : ""
+                                      }`}
+                                    >
+                                      {tableSummaries[chunkIndex]?.[
+                                        blockIndex
+                                      ] && (
+                                        <div className="absolute left-0 top-0 z-50">
+                                          <TooltipProvider>
+                                            <Tooltip
+                                              open={
+                                                activeTooltip ===
+                                                `${chunkIndex}_${blockIndex}`
+                                              }
+                                            >
+                                              <TooltipTrigger
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  if (
+                                                    activeTooltip ===
+                                                    `${chunkIndex}_${blockIndex}`
+                                                  ) {
+                                                    setActiveTooltip(null);
+                                                  } else {
+                                                    setActiveTooltip(
+                                                      `${chunkIndex}_${blockIndex}`
+                                                    );
+                                                  }
+                                                }}
+                                              >
+                                                <div
+                                                  className="animate-glow group relative h-6 w-6"
+                                                  style={{
+                                                    animation:
+                                                      "glow 2s ease-in-out infinite alternate",
+                                                    filter:
+                                                      "drop-shadow(0 0 5px var(--reducto-light-purple)) drop-shadow(0 0 8px var(--reducto-light-purple))",
+                                                  }}
+                                                >
+                                                  <Sparkles
+                                                    className="animate-glow absolute h-6 w-6"
+                                                    style={{
+                                                      color:
+                                                        "var(--reducto-mid-purple)",
+                                                    }}
+                                                  />
+                                                </div>
+                                              </TooltipTrigger>
+                                              <TooltipContent
+                                                onPointerDownOutside={() =>
+                                                  setActiveTooltip(null)
+                                                }
+                                                className="max-w-[400px] z-50"
+                                              >
+                                                <div className="flex flex-col space-y-1">
+                                                  <div className="flex items-center space-x-2">
+                                                    <Sparkles className="h-4 w-4" />
+                                                    <span className="font-bold">
+                                                      Reducto AI Table Summary
+                                                    </span>
+                                                  </div>
+                                                  <p>
+                                                    {
+                                                      tableSummaries[
+                                                        chunkIndex
+                                                      ][blockIndex]
+                                                    }
+                                                  </p>
+                                                </div>
+                                              </TooltipContent>
+                                            </Tooltip>
+                                          </TooltipProvider>
+                                        </div>
+                                      )}
+                                      <Content block={block} />
+                                    </div>
+                                  </div>
+                                )}
+                                {isChunkBoundary && (
+                                  <div className="my-4 border-t border-dashed border-gray-200" />
+                                )}
+                              </div>
+                            );
+                          }
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex items-center justify-center h-full text-gray-500">
+                  {loading
+                    ? "Processing document..."
+                    : "No results yet. Configure parsing options and process a document."}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <DocumentLayout
+      title="Reducto Local Document Playground"
+      pdfFile={pdfFile}
+      setPdfFile={setPdfFile}
+      numPages={numPages}
+      setNumPages={setNumPages}
+      pagination={pagination}
+      setPagination={setPagination}
+      jsonOutput={jsonOutput}
+      setJsonOutput={setJsonOutput}
+      loading={loading}
+      showBlocks={showBlocks}
+      setShowBlocks={setShowBlocks}
+      onProcessDocument={onProcessDocument}
+      onScrollToBlock={scrollToBboxOrBlock}
+      rightPanelContent={rightPanelContent}
+      accordionContent={accordionContent}
+      citations={undefined}
+    />
+  );
 }
