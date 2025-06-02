@@ -1,13 +1,11 @@
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { useState, useEffect, ReactNode, useRef } from "react";
-import { components } from "../../schema";
 import {
   Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -19,18 +17,20 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Toggle } from "./ui/toggle";
-import RenderDocument from "./render-document";
 import {
   Download,
+  FileText,
   LayoutPanelTop,
   Loader2Icon,
   Upload,
-  FileText,
   X,
 } from "lucide-react";
+import { ReactNode, useEffect, useRef } from "react";
 import { Link, useLocation } from "react-router-dom";
+import { components } from "../../schema";
 import { clearDocumentFromStore } from "../lib/document-store";
+import RenderDocument from "./render-document";
+import { Toggle } from "./ui/toggle";
 
 interface DocumentLayoutProps {
   title: string;

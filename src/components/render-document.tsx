@@ -1,16 +1,21 @@
 "use client";
 
-import { Document, Page } from "react-pdf";
-import { components } from "../../schema";
-import { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import JSZip from "jszip";
-import { parseStringPromise } from "xml2js";
-import { bboxTypeColors } from "../lib/colors";
-import React from "react";
-import { read, utils, WorkBook } from "xlsx";
-import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import JSZip from "jszip";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { Document, Page } from "react-pdf";
+import { read, utils, WorkBook } from "xlsx";
+import { parseStringPromise } from "xml2js";
+import { components } from "../../schema";
+import { bboxTypeColors } from "../lib/colors";
 
 const getDOCXPageCount = async (buffer: ArrayBuffer) => {
   const zip = await JSZip.loadAsync(buffer);
@@ -156,7 +161,7 @@ const XLSXDisplayer: React.FC<XLSXDisplayerProps> = ({
       const newSheetData: { [key: string]: any[][] } = {};
       const newMaxColumns: { [key: string]: number } = {};
 
-      wb.SheetNames.forEach((sheetName, index) => {
+      wb.SheetNames.forEach((sheetName) => {
         const data = utils.sheet_to_json(wb.Sheets[sheetName]!, { header: 1 });
         newSheetData[sheetName] = data as any[][];
         let maxCol = 0;
@@ -465,7 +470,6 @@ const XLSXRenderer = ({
   documentUrl,
   triggerCall,
   chunks,
-  chunksLoading,
 }: XLSXRendererProps) => {
   const blocks = useMemo(
     () =>
@@ -627,7 +631,7 @@ const ImageRenderer = ({
 
         <div className="absolute left-0 top-0 h-full w-full">
           {!chunksLoading && chunks?.length
-            ? bboxes.map((bbox, i) => (
+            ? bboxes.map((bbox) => (
                 <div
                   id={`bbox_${bbox.chunkIndex}_${bbox.blockIndex}`}
                   key={`bbox_${bbox.chunkIndex}_${bbox.blockIndex}`}

@@ -1,25 +1,16 @@
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  loadDocumentFromStore,
+  saveDocumentToStore,
+} from "@/lib/document-store";
+import { useQuery } from "@tanstack/react-query";
+import { CheckCircle, Copy, XCircle } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import { components } from "../../schema";
 import DocumentLayout from "../components/document-layout";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Copy, CheckCircle, XCircle } from "lucide-react";
-import { bboxTypeColors } from "../lib/colors";
-import { Badge } from "@/components/ui/badge";
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
-import { useQuery } from "@tanstack/react-query";
-import {
-  saveDocumentToStore,
-  loadDocumentFromStore,
-} from "@/lib/document-store";
 
 async function uploadFile(
   apiUrl: string,

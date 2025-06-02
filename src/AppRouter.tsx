@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate, Link, useLocation } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router-dom";
 import App from "./App";
 import ExtractPage from "./pages/ExtractPage";
 

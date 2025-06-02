@@ -1,57 +1,29 @@
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { pdfjs } from "react-pdf";
-import { Document, Page } from "react-pdf";
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Label } from "@/components/ui/label";
-import { match } from "ts-pattern";
-import { components } from "../schema";
-import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@/components/ui/hover-card";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
-import { useQuery } from "@tanstack/react-query";
-import {
-  BotIcon,
-  Download,
-  LayoutPanelTop,
-  Loader2Icon,
-  Sparkles,
-  Copy,
-} from "lucide-react";
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/components/ui/resizable";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { bboxTypeColors } from "./lib/colors";
-import { Toggle } from "./components/ui/toggle";
-import { Textarea } from "./components/ui/textarea";
+import { useQuery } from "@tanstack/react-query";
+import { BotIcon, Copy, Sparkles } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { pdfjs } from "react-pdf";
+import { match } from "ts-pattern";
+import { components } from "../schema";
 import DocumentLayout from "./components/document-layout";
+import { Textarea } from "./components/ui/textarea";
+import { bboxTypeColors } from "./lib/colors";
 import {
-  saveDocumentToStore,
   loadDocumentFromStore,
+  saveDocumentToStore,
 } from "./lib/document-store";
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
-
-const MAX_PAGINATION = 15;
 
 async function uploadFile(
   apiUrl: string,
