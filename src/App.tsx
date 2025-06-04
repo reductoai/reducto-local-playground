@@ -369,32 +369,38 @@ export default function App() {
       isBbox: boolean = true,
       color: string = "gray"
     ) => {
-      const blockIds = isBbox
-        ? [`bbox_${chunkIndex}_${blockIndex}`]
-        : [
-            `block_${chunkIndex}_${blockIndex}`,
-            `text_block_${chunkIndex}_${blockIndex}`,
-          ];
+      // Switch to result tab when bounding box is clicked
+      setActiveTab("result");
 
-      for (const blockId of blockIds) {
-        const element = document.getElementById(blockId);
-        if (element) {
-          element.scrollIntoView({ behavior: "smooth", block: "center" });
+      // Add a small delay to allow the tab content to render
+      setTimeout(() => {
+        const blockIds = isBbox
+          ? [`bbox_${chunkIndex}_${blockIndex}`]
+          : [
+              `block_${chunkIndex}_${blockIndex}`,
+              `text_block_${chunkIndex}_${blockIndex}`,
+            ];
 
-          // Add multiple visual effects for better visibility
-          const classesToAdd = isBbox
-            ? ["bg-opacity-50", "outline-4", "animate-pulse"]
-            : [`bg-${color}-500`, "bg-opacity-25", "animate-pulse"];
+        for (const blockId of blockIds) {
+          const element = document.getElementById(blockId);
+          if (element) {
+            element.scrollIntoView({ behavior: "smooth", block: "center" });
 
-          element.classList.add(...classesToAdd);
+            // Add multiple visual effects for better visibility
+            const classesToAdd = isBbox
+              ? ["bg-opacity-50", "outline-4", "animate-pulse"]
+              : [`bg-${color}-500`, "bg-opacity-25", "animate-pulse"];
 
-          // Remove classes after animation
-          setTimeout(() => {
-            element.classList.remove(...classesToAdd);
-          }, 2000);
-          break;
+            element.classList.add(...classesToAdd);
+
+            // Remove classes after animation
+            setTimeout(() => {
+              element.classList.remove(...classesToAdd);
+            }, 2000);
+            break;
+          }
         }
-      }
+      }, 100); // 100ms delay to allow tab content to render
     },
     []
   );
