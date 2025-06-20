@@ -183,12 +183,17 @@ export default function DocumentLayout({
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button variant="outline" onClick={downloadJson}>
+                      <Button 
+                        variant="outline" 
+                        onClick={downloadJson}
+                        disabled={!jsonOutput}
+                        className={!jsonOutput ? "opacity-50 cursor-not-allowed" : ""}
+                      >
                         <Download className="h-4 w-4" />
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p>Download JSON Result</p>
+                      <p>{jsonOutput ? "Download JSON Result" : "Process a document first to download results"}</p>
                     </TooltipContent>
                   </Tooltip>
                   <Tooltip>
