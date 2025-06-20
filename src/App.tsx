@@ -51,6 +51,9 @@ async function uploadFile(
 
   if (!response.ok) {
     console.error(await response.text());
+    if (response.status === 401) {
+      throw new Error("API authentication failed. Please check your API token configuration.");
+    }
     throw new Error("Failed to upload file");
   }
 
@@ -69,6 +72,9 @@ async function fetchJobStatus(apiUrl: string, jobId: string, token: string) {
     },
   });
   if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error("API authentication failed. Please check your API token configuration.");
+    }
     throw new Error("Network response was not ok");
   }
   const jobStatusResponse = await response.json();
@@ -106,6 +112,9 @@ async function getJobId(
 
     if (!async_response.ok) {
       console.error(await async_response.text());
+      if (async_response.status === 401) {
+        throw new Error("API authentication failed. Please check your API token configuration.");
+      }
       throw new Error("Failed to start job");
     }
 
@@ -398,7 +407,11 @@ export default function App() {
       setJobId(jobId);
     } catch (err) {
       setLoading(false);
-      alert(err);
+      if (err instanceof Error && err.message.includes("API authentication failed")) {
+        alert(`${err.message}\n\nPlease configure your API token in the API Token field above.`);
+      } else {
+        alert(err);
+      }
     }
   }, [pdfFile, apiUrl, apiToken, apiConfigRaw]);
 
