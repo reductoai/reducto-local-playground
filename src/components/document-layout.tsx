@@ -40,9 +40,15 @@ interface DocumentLayoutProps {
   setNumPages: (pages: number) => void;
   pagination: number;
   setPagination: (page: number) => void;
-  jsonOutput: components["schemas"]["ParseResponse"] | null;
+  jsonOutput:
+    | components["schemas"]["ParseResponse"]
+    | components["schemas"]["ExtractResponse"]
+    | null;
   setJsonOutput: (
-    output: components["schemas"]["ParseResponse"] | null
+    output:
+      | components["schemas"]["ParseResponse"]
+      | components["schemas"]["ExtractResponse"]
+      | null
   ) => void;
   loading: boolean;
   showBlocks: boolean;
@@ -57,6 +63,7 @@ interface DocumentLayoutProps {
   rightPanelContent: ReactNode;
   accordionContent?: ReactNode;
   citations?: components["schemas"]["ExtractResponse"]["citations"];
+  jobId?: string | null;
 }
 
 function Navigation() {
@@ -106,6 +113,7 @@ export default function DocumentLayout({
   rightPanelContent,
   accordionContent,
   citations,
+  jobId,
 }: DocumentLayoutProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -147,7 +155,11 @@ export default function DocumentLayout({
         type: "application/json",
       })
     );
-    element.download = `${jsonOutput.job_id}.json`;
+    const fileId =
+      ("job_id" in jsonOutput ? (jsonOutput as any).job_id : null) ??
+      jobId ??
+      "result";
+    element.download = `${fileId}.json`;
     element.click();
   };
 
@@ -289,7 +301,7 @@ export default function DocumentLayout({
         <ResizablePanel defaultSize={30} minSize={30} className="p-4">
           <RenderDocument
             pdfFile={pdfFile}
-            result={jsonOutput?.result}
+            result={jsonOutput?.result as any}
             loading={loading}
             triggerCall={(pages) => setNumPages(pages)}
             onBboxClick={onScrollToBlock}

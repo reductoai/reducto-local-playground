@@ -4,6 +4,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Copy } from "lucide-react";
+import { parse, Allow } from "partial-json";
 
 interface JsonSchemaBuilderProps {
   schema: any;
@@ -21,7 +22,7 @@ export default function JsonSchemaBuilder({
   const handleRawSchemaChange = (value: string) => {
     setRawSchema(value);
     try {
-      const parsed = JSON.parse(value);
+      const parsed = parse(value, Allow.ALL);
       onSchemaChange(parsed);
     } catch {
       // Invalid JSON, don't update

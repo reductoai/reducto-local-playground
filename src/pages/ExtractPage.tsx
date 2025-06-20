@@ -7,10 +7,16 @@ import {
   saveDocumentToStore,
 } from "@/lib/document-store";
 import { useQuery } from "@tanstack/react-query";
-import { CheckCircle, Copy, XCircle } from "lucide-react";
+import { CheckCircle, Copy, XCircle, RefreshCcw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { components } from "../../schema";
 import DocumentLayout from "../components/document-layout";
+import { parse, Allow } from "partial-json";
+import { getLocal, setLocal, removeLocal } from "@/lib/utils";
+import {
+  API_URL as DEFAULT_API_URL,
+  API_TOKEN as DEFAULT_API_TOKEN,
+} from "@/lib/env";
 
 async function uploadFile(
   apiUrl: string,
@@ -114,9 +120,11 @@ type ExtractConfig = {
 function JsonSchemaBuilder({
   schema,
   onSchemaChange,
+  onReset,
 }: {
   schema: any;
   onSchemaChange: (schema: any) => void;
+  onReset: () => void;
 }) {
   const [rawSchema, setRawSchema] = useState(
     JSON.stringify(schema || {}, null, 2)
@@ -154,6 +162,9 @@ function JsonSchemaBuilder({
           ) : (
             <XCircle className="h-4 w-4 text-red-500" />
           )}
+          <Button variant="outline" size="sm" onClick={onReset}>
+            <RefreshCcw className="h-4 w-4" />
+          </Button>
         </div>
         <Button
           variant="ghost"
@@ -224,22 +235,76 @@ const defaultExtractConfig: ExtractConfig = {
 export default function ExtractPage() {
   const [pdfFile, setPdfFile] = useState<File | undefined>(undefined);
   const [numPages, setNumPages] = useState<number>(0);
-  const [apiUrl, setApiUrl] = useState<string>(
-    import.meta.env.VITE_API_URL ?? "https://platform.reducto.ai"
-  );
-  const [apiToken, setApiToken] = useState<string>(
-    import.meta.env.VITE_API_TOKEN ?? ""
-  );
   const [loading, setLoading] = useState<boolean>(false);
   const [pagination, setPagination] = useState<number>(0);
   const [showBlocks, setShowBlocks] = useState<boolean>(false);
-  const [extractConfig, setExtractConfig] =
-    useState<ExtractConfig>(defaultExtractConfig);
+  const [extractConfig, setExtractConfig] = useState<ExtractConfig>(() => {
+    try {
+      return JSON.parse(
+        getLocal("extract_config_raw", JSON.stringify(defaultExtractConfig))
+      ) as ExtractConfig;
+    } catch {
+      return defaultExtractConfig;
+    }
+  });
   const [jsonOutput, setJsonOutput] = useState<
     components["schemas"]["ExtractResponse"] | null
   >(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"config" | "result">("config");
+
+  const [apiUrl, setApiUrl] = useState<string>(() =>
+    getLocal("api_url", DEFAULT_API_URL)
+  );
+  const [apiToken, setApiToken] = useState<string>(() =>
+    getLocal("api_token", DEFAULT_API_TOKEN)
+  );
+
+  const resetApiDefaults = () => {
+    if (!confirm("Reset API URL, token and extraction config to defaults?"))
+      return;
+    setApiUrl(DEFAULT_API_URL);
+    setApiToken(DEFAULT_API_TOKEN);
+    setExtractConfig(defaultExtractConfig);
+    setExtractConfigRaw(JSON.stringify(defaultExtractConfig, null, 2));
+    removeLocal("api_url");
+    removeLocal("api_token");
+    removeLocal("extract_config_raw");
+  };
+
+  // Persist any changes to API URL and token
+  useEffect(() => {
+    try {
+      setLocal("api_url", apiUrl);
+    } catch {}
+  }, [apiUrl]);
+
+  useEffect(() => {
+    try {
+      setLocal("api_token", apiToken);
+    } catch {}
+  }, [apiToken]);
+
+  const [extractConfigRaw, setExtractConfigRaw] = useState<string>(() =>
+    getLocal(
+      "extract_config_raw",
+      JSON.stringify(defaultExtractConfig, null, 2)
+    )
+  );
+
+  useEffect(() => {
+    try {
+      setLocal("extract_config_raw", extractConfigRaw);
+    } catch {}
+  }, [extractConfigRaw]);
+
+  // Keep raw JSON in sync when extractConfig is changed via UI helpers (system prompt, schema builder, etc.)
+  useEffect(() => {
+    const serialized = JSON.stringify(extractConfig, null, 2);
+    if (serialized !== extractConfigRaw) {
+      setExtractConfigRaw(serialized);
+    }
+  }, [extractConfig]);
 
   // Load stored document on mount
   useEffect(() => {
@@ -272,11 +337,12 @@ export default function ExtractPage() {
   }, []);
 
   const updateExtractConfigFromJSON = useCallback((configText: string) => {
+    setExtractConfigRaw(configText);
     try {
-      const parsed = JSON.parse(configText);
+      const parsed = parse(configText, Allow.ALL) as ExtractConfig;
       setExtractConfig(parsed);
     } catch {
-      // Invalid JSON, don't update
+      // Even partial-json couldn't parse – keep raw text but don't update config
     }
   }, []);
 
@@ -303,23 +369,36 @@ export default function ExtractPage() {
   }, [jobData, jobId]);
 
   const onProcessDocument = useCallback(async () => {
-    if (pdfFile) {
-      setLoading(true);
-      try {
-        const fileId = await uploadFile(apiUrl, pdfFile, apiToken);
-        const jobId = await getExtractJobId(
-          apiUrl,
-          fileId,
-          apiToken,
-          extractConfig
-        );
-        setJobId(jobId);
-      } catch (err) {
-        setLoading(false);
-        alert(err);
-      }
+    if (!pdfFile) return;
+
+    // Strictly parse extract config before sending
+    let strictConfig: ExtractConfig;
+    try {
+      strictConfig = JSON.parse(extractConfigRaw);
+    } catch (err) {
+      alert(
+        "Extract API Config JSON is invalid. Please fix it before processing."
+      );
+      return;
     }
-  }, [pdfFile, apiUrl, apiToken, extractConfig]);
+
+    setExtractConfig(strictConfig);
+
+    setLoading(true);
+    try {
+      const fileId = await uploadFile(apiUrl, pdfFile, apiToken);
+      const jobId = await getExtractJobId(
+        apiUrl,
+        fileId,
+        apiToken,
+        strictConfig
+      );
+      setJobId(jobId);
+    } catch (err) {
+      setLoading(false);
+      alert(err);
+    }
+  }, [pdfFile, apiUrl, apiToken, extractConfigRaw]);
 
   const scrollToBboxOrBlock = useCallback(
     (
@@ -370,19 +449,19 @@ export default function ExtractPage() {
       </TabsList>
 
       <TabsContent value="api" className="space-y-4 pt-4">
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
+        <div className="flex gap-4 items-end">
+          <div className="flex-1 space-y-2">
             <Label htmlFor="api-url">API URL</Label>
             <input
               id="api-url"
               type="text"
-              placeholder="https://v1.api.reducto.ai"
+              placeholder="https://platform.reducto.ai"
               value={apiUrl}
               onChange={(e) => setApiUrl(e.target.value)}
               className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             />
           </div>
-          <div className="space-y-2">
+          <div className="flex-1 space-y-2">
             <Label htmlFor="api-token">API Token</Label>
             <input
               type="password"
@@ -391,6 +470,16 @@ export default function ExtractPage() {
               onChange={(e) => setApiToken(e.target.value)}
               className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             />
+          </div>
+          <div className="flex-none">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={resetApiDefaults}
+              className="h-10"
+            >
+              <RefreshCcw className="h-4 w-4 mr-1" /> Default
+            </Button>
           </div>
         </div>
       </TabsContent>
@@ -443,23 +532,38 @@ export default function ExtractPage() {
             <div className="space-y-6">
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label
-                    htmlFor="system-prompt"
-                    className="text-lg font-semibold"
-                  >
-                    System Prompt
-                  </Label>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() =>
-                      navigator.clipboard.writeText(
-                        extractConfig.system_prompt || ""
-                      )
-                    }
-                  >
-                    <Copy className="h-4 w-4" />
-                  </Button>
+                  <div className="flex space-x-2 items-center">
+                    <Label
+                      htmlFor="system-prompt"
+                      className="text-lg font-semibold"
+                    >
+                      System Prompt
+                    </Label>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        updateSystemPrompt(
+                          defaultExtractConfig.system_prompt ?? ""
+                        )
+                      }
+                    >
+                      <RefreshCcw className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <div className="flex space-x-2 items-center">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() =>
+                        navigator.clipboard.writeText(
+                          extractConfig.system_prompt || ""
+                        )
+                      }
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
                 <Textarea
                   id="system-prompt"
@@ -473,32 +577,46 @@ export default function ExtractPage() {
               <JsonSchemaBuilder
                 schema={extractConfig.schema}
                 onSchemaChange={updateSchema}
+                onReset={() => updateSchema(defaultExtractConfig.schema)}
               />
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label
-                    htmlFor="extract-config"
-                    className="text-lg font-semibold"
-                  >
-                    Extract API Config
-                  </Label>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() =>
-                      navigator.clipboard.writeText(
-                        JSON.stringify(extractConfig, null, 2)
-                      )
-                    }
-                  >
-                    <Copy className="h-4 w-4" />
-                  </Button>
+                  <div className="flex space-x-2 items-center">
+                    <Label className="text-lg font-semibold">
+                      Extract API Config
+                    </Label>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setExtractConfig(defaultExtractConfig);
+                        setExtractConfigRaw(
+                          JSON.stringify(defaultExtractConfig, null, 2)
+                        );
+                      }}
+                    >
+                      <RefreshCcw className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <div className="flex space-x-2 items-center">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() =>
+                        navigator.clipboard.writeText(
+                          JSON.stringify(extractConfig, null, 2)
+                        )
+                      }
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
                 <Textarea
                   id="extract-config"
                   className="w-full font-mono min-h-[400px] text-sm"
-                  value={JSON.stringify(extractConfig, null, 2)}
+                  value={extractConfigRaw}
                   onChange={(e) => updateExtractConfigFromJSON(e.target.value)}
                 />
               </div>
@@ -553,8 +671,8 @@ export default function ExtractPage() {
       setNumPages={setNumPages}
       pagination={pagination}
       setPagination={setPagination}
-      jsonOutput={null} // Pass null since we're using extract response
-      setJsonOutput={() => {}} // No-op since we manage our own state
+      jsonOutput={jsonOutput}
+      setJsonOutput={setJsonOutput as any}
       loading={loading}
       showBlocks={showBlocks}
       setShowBlocks={setShowBlocks}
@@ -563,6 +681,7 @@ export default function ExtractPage() {
       rightPanelContent={rightPanelContent}
       accordionContent={accordionContent}
       citations={jsonOutput?.citations}
+      jobId={jobId}
     />
   );
 }

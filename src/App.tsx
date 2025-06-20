@@ -10,7 +10,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useQuery } from "@tanstack/react-query";
-import { BotIcon, Copy, Sparkles } from "lucide-react";
+import { BotIcon, Copy, Sparkles, RefreshCcw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { pdfjs } from "react-pdf";
 import { match } from "ts-pattern";
@@ -22,6 +22,12 @@ import {
   loadDocumentFromStore,
   saveDocumentToStore,
 } from "./lib/document-store";
+import { parse, Allow } from "partial-json";
+import { getLocal, setLocal, removeLocal } from "./lib/utils";
+import {
+  API_URL as DEFAULT_API_URL,
+  API_TOKEN as DEFAULT_API_TOKEN,
+} from "@/lib/env";
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
 
@@ -269,12 +275,6 @@ export function Content({ block }: { block: any }) {
 export default function App() {
   const [pdfFile, setPdfFile] = useState<File | undefined>(undefined);
   const [numPages, setNumPages] = useState<number>(0);
-  const [apiUrl, setApiUrl] = useState<string>(
-    import.meta.env.VITE_API_URL ?? "https://platform.reducto.ai"
-  );
-  const [apiToken, setApiToken] = useState<string>(
-    import.meta.env.VITE_API_TOKEN ?? ""
-  );
   const [loading, setLoading] = useState<boolean>(false);
   const [output, setOutput] = useState<string>("");
   const [pagination, setPagination] = useState<number>(0);
@@ -286,6 +286,34 @@ export default function App() {
   const [apiConfig, setApiConfig] = useState<ParseConfig>(defaultParseConfig);
   const [activeTab, setActiveTab] = useState<"config" | "result">("config");
   const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
+
+  const [apiUrl, setApiUrl] = useState<string>(() =>
+    getLocal("api_url", DEFAULT_API_URL)
+  );
+  const [apiToken, setApiToken] = useState<string>(() =>
+    getLocal("api_token", DEFAULT_API_TOKEN)
+  );
+
+  // Persist and hydrate API Config raw JSON
+  const [apiConfigRaw, setApiConfigRaw] = useState<string>(() =>
+    getLocal(
+      "parse_api_config_raw",
+      JSON.stringify(defaultParseConfig, null, 2)
+    )
+  );
+
+  // Persist api_url and api_token whenever they change
+  useEffect(() => {
+    setLocal("api_url", apiUrl);
+  }, [apiUrl]);
+
+  useEffect(() => {
+    setLocal("api_token", apiToken);
+  }, [apiToken]);
+
+  useEffect(() => {
+    setLocal("parse_api_config_raw", apiConfigRaw);
+  }, [apiConfigRaw]);
 
   // Load stored document on mount
   useEffect(() => {
@@ -349,18 +377,30 @@ export default function App() {
   }, [jobData]);
 
   const onProcessDocument = useCallback(async () => {
-    if (pdfFile) {
-      setLoading(true);
-      try {
-        const fileId = await uploadFile(apiUrl, pdfFile, apiToken);
-        const jobId = await getJobId(apiUrl, fileId, apiToken, apiConfig);
-        setJobId(jobId);
-      } catch (err) {
-        setLoading(false);
-        alert(err);
-      }
+    if (!pdfFile) return;
+
+    // Perform a strict parse before sending to API
+    let strictConfig: ParseConfig;
+    try {
+      strictConfig = JSON.parse(apiConfigRaw);
+    } catch (err) {
+      alert("API Config JSON is invalid. Please fix it before processing.");
+      return;
     }
-  }, [pdfFile, apiUrl, apiToken, apiConfig]);
+
+    // Persist the strictly-parsed config for later sessions
+    setApiConfig(strictConfig);
+
+    setLoading(true);
+    try {
+      const fileId = await uploadFile(apiUrl, pdfFile, apiToken);
+      const jobId = await getJobId(apiUrl, fileId, apiToken, strictConfig);
+      setJobId(jobId);
+    } catch (err) {
+      setLoading(false);
+      alert(err);
+    }
+  }, [pdfFile, apiUrl, apiToken, apiConfigRaw]);
 
   const scrollToBboxOrBlock = useCallback(
     (
@@ -460,6 +500,17 @@ export default function App() {
     );
   }, [jsonOutput]);
 
+  const resetApiDefaults = () => {
+    if (!confirm("Reset API URL, token and parse config to defaults?")) return;
+    setApiUrl(DEFAULT_API_URL);
+    setApiToken(DEFAULT_API_TOKEN);
+    setApiConfig(defaultParseConfig);
+    setApiConfigRaw(JSON.stringify(defaultParseConfig, null, 2));
+    removeLocal("api_url");
+    removeLocal("api_token");
+    removeLocal("parse_api_config_raw");
+  };
+
   const accordionContent = (
     <Tabs defaultValue="api" className="w-full">
       <TabsList className="w-full">
@@ -472,19 +523,19 @@ export default function App() {
       </TabsList>
 
       <TabsContent value="api" className="space-y-4 pt-4">
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
+        <div className="flex gap-4 items-end">
+          <div className="flex-1 space-y-2">
             <Label htmlFor="api-url">API URL</Label>
             <input
               id="api-url"
               type="text"
-              placeholder="https://v1.api.reducto.ai"
+              placeholder="https://platform.reducto.ai"
               value={apiUrl}
               onChange={(e) => setApiUrl(e.target.value)}
               className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             />
           </div>
-          <div className="space-y-2">
+          <div className="flex-1 space-y-2">
             <Label htmlFor="api-token">API Token</Label>
             <input
               type="password"
@@ -493,6 +544,16 @@ export default function App() {
               onChange={(e) => setApiToken(e.target.value)}
               className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             />
+          </div>
+          <div className="flex-none">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-10"
+              onClick={resetApiDefaults}
+            >
+              <RefreshCcw className="h-4 w-4 mr-1" /> Default
+            </Button>
           </div>
         </div>
       </TabsContent>
@@ -539,30 +600,52 @@ export default function App() {
             <div className="space-y-6">
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label htmlFor="api-config" className="text-lg font-semibold">
-                    API Config
-                  </Label>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() =>
-                      navigator.clipboard.writeText(
-                        JSON.stringify(apiConfig, null, 2)
-                      )
-                    }
-                  >
-                    <Copy className="h-4 w-4" />
-                  </Button>
+                  <div className="flex space-x-2 items-center">
+                    <Label
+                      htmlFor="api-config"
+                      className="text-lg font-semibold"
+                    >
+                      API Config
+                    </Label>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setApiConfig(defaultParseConfig);
+                        setApiConfigRaw(
+                          JSON.stringify(defaultParseConfig, null, 2)
+                        );
+                      }}
+                    >
+                      <RefreshCcw className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <div className="flex space-x-2 items-center">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() =>
+                        navigator.clipboard.writeText(
+                          JSON.stringify(apiConfig, null, 2)
+                        )
+                      }
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
                 <Textarea
                   id="api-config"
                   className="w-full font-mono min-h-[400px] text-sm"
-                  value={JSON.stringify(apiConfig, null, 2)}
+                  value={apiConfigRaw}
                   onChange={(e) => {
+                    const raw = e.target.value;
+                    setApiConfigRaw(raw);
                     try {
-                      setApiConfig(JSON.parse(e.target.value));
+                      const parsed = parse(raw, Allow.ALL) as ParseConfig;
+                      setApiConfig(parsed);
                     } catch {
-                      // Invalid JSON, don't update
+                      // Even partial-json couldn't parse – keep raw text but don't update config yet
                     }
                   }}
                 />
@@ -751,7 +834,7 @@ export default function App() {
       pagination={pagination}
       setPagination={setPagination}
       jsonOutput={jsonOutput}
-      setJsonOutput={setJsonOutput}
+      setJsonOutput={setJsonOutput as any}
       loading={loading}
       showBlocks={showBlocks}
       setShowBlocks={setShowBlocks}
@@ -760,6 +843,7 @@ export default function App() {
       rightPanelContent={rightPanelContent}
       accordionContent={accordionContent}
       citations={undefined}
+      jobId={jobId}
     />
   );
 }
