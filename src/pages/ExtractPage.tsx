@@ -12,7 +12,11 @@ import { useCallback, useEffect, useState } from "react";
 import { components } from "../../schema";
 import DocumentLayout from "../components/document-layout";
 import { parse, Allow } from "partial-json";
-import { getLocal } from "@/lib/utils";
+import { getLocal, setLocal, removeLocal } from "@/lib/utils";
+import {
+  API_URL as DEFAULT_API_URL,
+  API_TOKEN as DEFAULT_API_TOKEN,
+} from "@/lib/env";
 
 async function uploadFile(
   apiUrl: string,
@@ -250,37 +254,34 @@ export default function ExtractPage() {
   const [activeTab, setActiveTab] = useState<"config" | "result">("config");
 
   const [apiUrl, setApiUrl] = useState<string>(() =>
-    getLocal(
-      "api_url",
-      import.meta.env.VITE_API_URL ?? "https://platform.reducto.ai"
-    )
+    getLocal("api_url", DEFAULT_API_URL)
   );
   const [apiToken, setApiToken] = useState<string>(() =>
-    getLocal("api_token", import.meta.env.VITE_API_TOKEN ?? "")
+    getLocal("api_token", DEFAULT_API_TOKEN)
   );
 
   const resetApiDefaults = () => {
     if (!confirm("Reset API URL, token and extraction config to defaults?"))
       return;
-    setApiUrl(import.meta.env.VITE_API_URL ?? "https://platform.reducto.ai");
-    setApiToken("");
+    setApiUrl(DEFAULT_API_URL);
+    setApiToken(DEFAULT_API_TOKEN);
     setExtractConfig(defaultExtractConfig);
     setExtractConfigRaw(JSON.stringify(defaultExtractConfig, null, 2));
-    localStorage.removeItem("api_url");
-    localStorage.removeItem("api_token");
-    localStorage.removeItem("extract_config_raw");
+    removeLocal("api_url");
+    removeLocal("api_token");
+    removeLocal("extract_config_raw");
   };
 
   // Persist any changes to API URL and token
   useEffect(() => {
     try {
-      localStorage.setItem("api_url", apiUrl);
+      setLocal("api_url", apiUrl);
     } catch {}
   }, [apiUrl]);
 
   useEffect(() => {
     try {
-      localStorage.setItem("api_token", apiToken);
+      setLocal("api_token", apiToken);
     } catch {}
   }, [apiToken]);
 
@@ -293,7 +294,7 @@ export default function ExtractPage() {
 
   useEffect(() => {
     try {
-      localStorage.setItem("extract_config_raw", extractConfigRaw);
+      setLocal("extract_config_raw", extractConfigRaw);
     } catch {}
   }, [extractConfigRaw]);
 

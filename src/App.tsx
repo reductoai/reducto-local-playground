@@ -23,7 +23,11 @@ import {
   saveDocumentToStore,
 } from "./lib/document-store";
 import { parse, Allow } from "partial-json";
-import { getLocal } from "./lib/utils";
+import { getLocal, setLocal, removeLocal } from "./lib/utils";
+import {
+  API_URL as DEFAULT_API_URL,
+  API_TOKEN as DEFAULT_API_TOKEN,
+} from "@/lib/env";
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
 
@@ -284,13 +288,10 @@ export default function App() {
   const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
 
   const [apiUrl, setApiUrl] = useState<string>(() =>
-    getLocal(
-      "api_url",
-      import.meta.env.VITE_API_URL ?? "https://platform.reducto.ai"
-    )
+    getLocal("api_url", DEFAULT_API_URL)
   );
   const [apiToken, setApiToken] = useState<string>(() =>
-    getLocal("api_token", import.meta.env.VITE_API_TOKEN ?? "")
+    getLocal("api_token", DEFAULT_API_TOKEN)
   );
 
   // Persist and hydrate API Config raw JSON
@@ -303,21 +304,15 @@ export default function App() {
 
   // Persist api_url and api_token whenever they change
   useEffect(() => {
-    try {
-      localStorage.setItem("api_url", apiUrl);
-    } catch {}
+    setLocal("api_url", apiUrl);
   }, [apiUrl]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem("api_token", apiToken);
-    } catch {}
+    setLocal("api_token", apiToken);
   }, [apiToken]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem("parse_api_config_raw", apiConfigRaw);
-    } catch {}
+    setLocal("parse_api_config_raw", apiConfigRaw);
   }, [apiConfigRaw]);
 
   // Load stored document on mount
@@ -507,13 +502,13 @@ export default function App() {
 
   const resetApiDefaults = () => {
     if (!confirm("Reset API URL, token and parse config to defaults?")) return;
-    setApiUrl(import.meta.env.VITE_API_URL ?? "https://platform.reducto.ai");
-    setApiToken("");
+    setApiUrl(DEFAULT_API_URL);
+    setApiToken(DEFAULT_API_TOKEN);
     setApiConfig(defaultParseConfig);
     setApiConfigRaw(JSON.stringify(defaultParseConfig, null, 2));
-    localStorage.removeItem("api_url");
-    localStorage.removeItem("api_token");
-    localStorage.removeItem("parse_api_config_raw");
+    removeLocal("api_url");
+    removeLocal("api_token");
+    removeLocal("parse_api_config_raw");
   };
 
   const accordionContent = (
