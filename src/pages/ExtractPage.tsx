@@ -298,14 +298,6 @@ export default function ExtractPage() {
     } catch {}
   }, [extractConfigRaw]);
 
-  // Keep raw JSON in sync when extractConfig is changed via UI helpers (system prompt, schema builder, etc.)
-  useEffect(() => {
-    const serialized = JSON.stringify(extractConfig, null, 2);
-    if (serialized !== extractConfigRaw) {
-      setExtractConfigRaw(serialized);
-    }
-  }, [extractConfig]);
-
   // Load stored document on mount
   useEffect(() => {
     const storedFile = loadDocumentFromStore();
@@ -323,27 +315,25 @@ export default function ExtractPage() {
 
   // Two-way binding: Update individual fields when extractConfig changes
   const updateSystemPrompt = useCallback((prompt: string) => {
-    setExtractConfig((prev) => ({
-      ...prev,
-      system_prompt: prompt,
-    }));
+    setExtractConfig((prev) => {
+      const updated = {
+        ...prev,
+        system_prompt: prompt,
+      };
+      setExtractConfigRaw(JSON.stringify(updated, null, 2));
+      return updated;
+    });
   }, []);
 
   const updateSchema = useCallback((schema: any) => {
-    setExtractConfig((prev) => ({
-      ...prev,
-      schema,
-    }));
-  }, []);
-
-  const updateExtractConfigFromJSON = useCallback((configText: string) => {
-    setExtractConfigRaw(configText);
-    try {
-      const parsed = parse(configText, Allow.ALL) as ExtractConfig;
-      setExtractConfig(parsed);
-    } catch {
-      // Even partial-json couldn't parse – keep raw text but don't update config
-    }
+    setExtractConfig((prev) => {
+      const updated = {
+        ...prev,
+        schema,
+      };
+      setExtractConfigRaw(JSON.stringify(updated, null, 2));
+      return updated;
+    });
   }, []);
 
   const { data: jobData } = useQuery({
@@ -617,7 +607,27 @@ export default function ExtractPage() {
                   id="extract-config"
                   className="w-full font-mono min-h-[400px] text-sm"
                   value={extractConfigRaw}
-                  onChange={(e) => updateExtractConfigFromJSON(e.target.value)}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    setExtractConfigRaw(raw);
+                    try {
+                      const parsed = parse(
+                        raw,
+                        Allow.ALL
+                      ) as Partial<ExtractConfig>;
+                      setExtractConfig((prev) => ({
+                        ...prev,
+                        ...parsed,
+                        schema:
+                          parsed.schema !== undefined
+                            ? parsed.schema
+                            : prev.schema,
+                      }));
+                    } catch {
+                      // Even partial-json couldn't parse – keep raw text but don't update config yet
+                      console.warn("Invalid Extract API Config JSON");
+                    }
+                  }}
                 />
               </div>
             </div>
