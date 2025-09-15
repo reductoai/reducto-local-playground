@@ -646,6 +646,7 @@ export default function App() {
                       setApiConfig(parsed);
                     } catch {
                       // Even partial-json couldn't parse – keep raw text but don't update config yet
+                      console.warn("Invalid Parse API Config JSON");
                     }
                   }}
                 />
