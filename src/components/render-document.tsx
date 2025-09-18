@@ -543,10 +543,8 @@ const DOCXPPTXRenderer = ({
               if (extension.slice(-1) === "x") {
                 // PPTX / DOCX
                 try {
-                  const buffer = Buffer.from(
-                    (await fetch(documentUrl).then((res) =>
-                      res.arrayBuffer()
-                    )) as ArrayBuffer
+                  const buffer = await fetch(documentUrl).then((res) =>
+                    res.arrayBuffer()
                   );
                   pageCount =
                     (extension === "docx"
