@@ -28,6 +28,13 @@ import {
   API_URL as DEFAULT_API_URL,
   API_TOKEN as DEFAULT_API_TOKEN,
 } from "@/lib/env";
+import {
+  API_VERSION_STORAGE_KEY,
+  DEFAULT_API_VERSION,
+  resolveApiVersion,
+  withDocumentInput,
+  type ApiVersion,
+} from "@/lib/api-version";
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
 
@@ -87,16 +94,15 @@ async function getJobId(
   apiUrl: string,
   fileId: string,
   token: string,
-  apiConfig: ParseConfig
+  apiConfig: ParseConfig,
+  apiVersion: ApiVersion
 ) {
-  console.log("document_url:", fileId);
+  const body = withDocumentInput(apiConfig, fileId, apiVersion);
+  console.log(apiVersion === "standard" ? "input:" : "document_url:", fileId);
   try {
     const async_response = await fetch(`${apiUrl}/parse_async`, {
       method: "POST",
-      body: JSON.stringify({
-        ...apiConfig,
-        document_url: fileId,
-      }),
+      body: JSON.stringify(body),
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
@@ -293,6 +299,9 @@ export default function App() {
   const [apiToken, setApiToken] = useState<string>(() =>
     getLocal("api_token", DEFAULT_API_TOKEN)
   );
+  const [apiVersion, setApiVersion] = useState<ApiVersion>(
+    () => getLocal(API_VERSION_STORAGE_KEY, DEFAULT_API_VERSION) as ApiVersion
+  );
 
   // Persist and hydrate API Config raw JSON
   const [apiConfigRaw, setApiConfigRaw] = useState<string>(() =>
@@ -310,6 +319,10 @@ export default function App() {
   useEffect(() => {
     setLocal("api_token", apiToken);
   }, [apiToken]);
+
+  useEffect(() => {
+    setLocal(API_VERSION_STORAGE_KEY, apiVersion);
+  }, [apiVersion]);
 
   useEffect(() => {
     setLocal("parse_api_config_raw", apiConfigRaw);
@@ -391,16 +404,26 @@ export default function App() {
     // Persist the strictly-parsed config for later sessions
     setApiConfig(strictConfig);
 
+    // Auto-detect the version from the config (explicit input/document_url or
+    // a version marker), falling back to the toggle selection.
+    const resolvedVersion = resolveApiVersion(strictConfig, apiVersion);
+
     setLoading(true);
     try {
       const fileId = await uploadFile(apiUrl, pdfFile, apiToken);
-      const jobId = await getJobId(apiUrl, fileId, apiToken, strictConfig);
+      const jobId = await getJobId(
+        apiUrl,
+        fileId,
+        apiToken,
+        strictConfig,
+        resolvedVersion
+      );
       setJobId(jobId);
     } catch (err) {
       setLoading(false);
       alert(err);
     }
-  }, [pdfFile, apiUrl, apiToken, apiConfigRaw]);
+  }, [pdfFile, apiUrl, apiToken, apiConfigRaw, apiVersion]);
 
   const scrollToBboxOrBlock = useCallback(
     (
@@ -504,10 +527,12 @@ export default function App() {
     if (!confirm("Reset API URL, token and parse config to defaults?")) return;
     setApiUrl(DEFAULT_API_URL);
     setApiToken(DEFAULT_API_TOKEN);
+    setApiVersion(DEFAULT_API_VERSION);
     setApiConfig(defaultParseConfig);
     setApiConfigRaw(JSON.stringify(defaultParseConfig, null, 2));
     removeLocal("api_url");
     removeLocal("api_token");
+    removeLocal(API_VERSION_STORAGE_KEY);
     removeLocal("parse_api_config_raw");
   };
 
@@ -555,6 +580,36 @@ export default function App() {
               <RefreshCcw className="h-4 w-4 mr-1" /> Default
             </Button>
           </div>
+        </div>
+
+        <div className="space-y-2">
+          <Label>Config Version</Label>
+          <div className="flex gap-1 rounded-md border border-input p-1 w-fit">
+            <Button
+              type="button"
+              variant={apiVersion === "standard" ? "default" : "ghost"}
+              size="sm"
+              className="h-8"
+              onClick={() => setApiVersion("standard")}
+            >
+              Standard (v3)
+            </Button>
+            <Button
+              type="button"
+              variant={apiVersion === "legacy" ? "default" : "ghost"}
+              size="sm"
+              className="h-8"
+              onClick={() => setApiVersion("legacy")}
+            >
+              Legacy (v2)
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Standard sends the document as{" "}
+            <code className="font-mono">input</code>; legacy sends it as{" "}
+            <code className="font-mono">document_url</code>. Configs that
+            already specify one of these fields override this toggle.
+          </p>
         </div>
       </TabsContent>
 
