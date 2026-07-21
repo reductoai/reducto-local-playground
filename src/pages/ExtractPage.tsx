@@ -17,6 +17,13 @@ import {
   API_URL as DEFAULT_API_URL,
   API_TOKEN as DEFAULT_API_TOKEN,
 } from "@/lib/env";
+import {
+  API_VERSION_STORAGE_KEY,
+  DEFAULT_API_VERSION,
+  resolveApiVersion,
+  withDocumentInput,
+  type ApiVersion,
+} from "@/lib/api-version";
 
 async function uploadFile(
   apiUrl: string,
@@ -74,16 +81,15 @@ async function getExtractJobId(
   apiUrl: string,
   fileId: string,
   token: string,
-  extractConfig: ExtractConfig
+  extractConfig: ExtractConfig,
+  apiVersion: ApiVersion
 ) {
-  console.log("document_url:", fileId);
+  const body = withDocumentInput(extractConfig, fileId, apiVersion);
+  console.log(apiVersion === "standard" ? "input:" : "document_url:", fileId);
   try {
     const async_response = await fetch(`${apiUrl}/extract_async`, {
       method: "POST",
-      body: JSON.stringify({
-        ...extractConfig,
-        document_url: fileId,
-      }),
+      body: JSON.stringify(body),
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
@@ -259,16 +265,21 @@ export default function ExtractPage() {
   const [apiToken, setApiToken] = useState<string>(() =>
     getLocal("api_token", DEFAULT_API_TOKEN)
   );
+  const [apiVersion, setApiVersion] = useState<ApiVersion>(
+    () => getLocal(API_VERSION_STORAGE_KEY, DEFAULT_API_VERSION) as ApiVersion
+  );
 
   const resetApiDefaults = () => {
     if (!confirm("Reset API URL, token and extraction config to defaults?"))
       return;
     setApiUrl(DEFAULT_API_URL);
     setApiToken(DEFAULT_API_TOKEN);
+    setApiVersion(DEFAULT_API_VERSION);
     setExtractConfig(defaultExtractConfig);
     setExtractConfigRaw(JSON.stringify(defaultExtractConfig, null, 2));
     removeLocal("api_url");
     removeLocal("api_token");
+    removeLocal(API_VERSION_STORAGE_KEY);
     removeLocal("extract_config_raw");
   };
 
@@ -284,6 +295,12 @@ export default function ExtractPage() {
       setLocal("api_token", apiToken);
     } catch {}
   }, [apiToken]);
+
+  useEffect(() => {
+    try {
+      setLocal(API_VERSION_STORAGE_KEY, apiVersion);
+    } catch {}
+  }, [apiVersion]);
 
   const [extractConfigRaw, setExtractConfigRaw] = useState<string>(() =>
     getLocal(
@@ -374,6 +391,10 @@ export default function ExtractPage() {
 
     setExtractConfig(strictConfig);
 
+    // Auto-detect the version from the config (explicit input/document_url or
+    // a version marker), falling back to the toggle selection.
+    const resolvedVersion = resolveApiVersion(strictConfig, apiVersion);
+
     setLoading(true);
     try {
       const fileId = await uploadFile(apiUrl, pdfFile, apiToken);
@@ -381,14 +402,15 @@ export default function ExtractPage() {
         apiUrl,
         fileId,
         apiToken,
-        strictConfig
+        strictConfig,
+        resolvedVersion
       );
       setJobId(jobId);
     } catch (err) {
       setLoading(false);
       alert(err);
     }
-  }, [pdfFile, apiUrl, apiToken, extractConfigRaw]);
+  }, [pdfFile, apiUrl, apiToken, extractConfigRaw, apiVersion]);
 
   const scrollToBboxOrBlock = useCallback(
     (
@@ -471,6 +493,36 @@ export default function ExtractPage() {
               <RefreshCcw className="h-4 w-4 mr-1" /> Default
             </Button>
           </div>
+        </div>
+
+        <div className="space-y-2">
+          <Label>Config Version</Label>
+          <div className="flex gap-1 rounded-md border border-input p-1 w-fit">
+            <Button
+              type="button"
+              variant={apiVersion === "standard" ? "default" : "ghost"}
+              size="sm"
+              className="h-8"
+              onClick={() => setApiVersion("standard")}
+            >
+              Standard (v3)
+            </Button>
+            <Button
+              type="button"
+              variant={apiVersion === "legacy" ? "default" : "ghost"}
+              size="sm"
+              className="h-8"
+              onClick={() => setApiVersion("legacy")}
+            >
+              Legacy (v2)
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Standard sends the document as{" "}
+            <code className="font-mono">input</code>; legacy sends it as{" "}
+            <code className="font-mono">document_url</code>. Configs that
+            already specify one of these fields override this toggle.
+          </p>
         </div>
       </TabsContent>
 
