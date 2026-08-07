@@ -122,6 +122,80 @@ type ParseConfig = {
   advanced_options?: components["schemas"]["AdvancedProcessingOptions"];
   experimental_options?: components["schemas"]["ExperimentalProcessingOptions"];
 };
+
+type FullResult = components["schemas"]["FullResult"];
+type ParseResponseMetadata = Omit<
+  components["schemas"]["ParseResponse"],
+  "result"
+>;
+type UrlResultCandidate = {
+  type: "url";
+  url?: unknown;
+  result_id?: unknown;
+};
+type ParseResultCandidate = FullResult | UrlResultCandidate;
+type NormalizedParseResult = {
+  metadata: ParseResponseMetadata;
+  result: ParseResultCandidate;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isFullResult = (value: unknown): value is FullResult =>
+  isRecord(value) && value.type === "full" && Array.isArray(value.chunks);
+
+const isUrlResult = (value: unknown): value is UrlResultCandidate =>
+  isRecord(value) && value.type === "url";
+
+const isParseResult = (value: unknown): value is ParseResultCandidate =>
+  isFullResult(value) || isUrlResult(value);
+
+const getParseResponseMetadata = (
+  value: Record<string, unknown>
+): ParseResponseMetadata => {
+  const numPages =
+    isRecord(value.usage) && typeof value.usage.num_pages === "number"
+      ? value.usage.num_pages
+      : 0;
+
+  return {
+    job_id: typeof value.job_id === "string" ? value.job_id : "manual",
+    duration: typeof value.duration === "number" ? value.duration : 0,
+    pdf_url: typeof value.pdf_url === "string" ? value.pdf_url : null,
+    usage: { num_pages: numPages },
+  };
+};
+
+const normalizePastedParseResult = (
+  value: unknown
+): NormalizedParseResult | null => {
+  if (isParseResult(value)) {
+    return {
+      metadata: getParseResponseMetadata({}),
+      result: value,
+    };
+  }
+
+  if (!isRecord(value)) return null;
+
+  if (isParseResult(value.result)) {
+    return {
+      metadata: getParseResponseMetadata(value),
+      result: value.result,
+    };
+  }
+
+  if (isRecord(value.result) && isParseResult(value.result.result)) {
+    return {
+      metadata: getParseResponseMetadata(value.result),
+      result: value.result.result,
+    };
+  }
+
+  return null;
+};
+
 const defaultParseConfig: ParseConfig = {
   options: {
     chunking: {
@@ -277,6 +351,7 @@ export default function App() {
   const [numPages, setNumPages] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(false);
   const [output, setOutput] = useState<string>("");
+  const [outputError, setOutputError] = useState<string>("");
   const [pagination, setPagination] = useState<number>(0);
   const [showBlocks, setShowBlocks] = useState<boolean>(false);
   const [jsonOutput, setJsonOutput] = useState<
@@ -342,23 +417,61 @@ export default function App() {
 
   useEffect(() => {
     const parseOutput = async () => {
-      try {
-        if (output) {
-          let parsed = JSON.parse(output);
+      if (!output.trim()) {
+        setJsonOutput(null);
+        setOutputError("");
+        return;
+      }
 
-          if (parsed.result.type === "url") {
-            const response = await fetch(parsed.result.url);
-            const json = await response.json();
-            parsed.result = json;
-            setJsonOutput(parsed);
-          } else if (parsed.result.type === "full") {
-            setJsonOutput(parsed);
-          }
-        }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(output);
       } catch (error) {
         console.error("Failed to parse output:", error);
         setJsonOutput(null);
+        setOutputError("Invalid JSON output.");
+        return;
       }
+
+      const normalized = normalizePastedParseResult(parsed);
+      if (!normalized) {
+        setJsonOutput(null);
+        setOutputError("No parse result found in the pasted JSON.");
+        return;
+      }
+
+      if (normalized.result.type === "url") {
+        if (
+          typeof normalized.result.url !== "string" ||
+          !normalized.result.url.trim()
+        ) {
+          console.error("Parse result URL is missing or invalid");
+          setJsonOutput(null);
+          setOutputError("The parse result URL is missing or invalid.");
+          return;
+        }
+
+        try {
+          const response = await fetch(normalized.result.url);
+          if (!response.ok) {
+            throw new Error(`Failed to fetch result: ${response.status}`);
+          }
+          const json: unknown = await response.json();
+          if (!isFullResult(json)) {
+            throw new Error("Fetched result is not a full parse result");
+          }
+          setJsonOutput({ ...normalized.metadata, result: json });
+          setOutputError("");
+        } catch (error) {
+          console.error("Failed to load result:", error);
+          setJsonOutput(null);
+          setOutputError("Unable to load the parse result.");
+        }
+        return;
+      }
+
+      setJsonOutput({ ...normalized.metadata, result: normalized.result });
+      setOutputError("");
     };
 
     parseOutput();
@@ -568,6 +681,11 @@ export default function App() {
             className="w-full font-mono min-h-[40px] h-[40px]"
             placeholder="Paste your JSON here"
           />
+          {outputError && (
+            <p id="json-input-error" className="text-sm text-muted-foreground">
+              {outputError}
+            </p>
+          )}
         </div>
       </TabsContent>
     </Tabs>
