@@ -752,9 +752,12 @@ const RenderDocument = ({
     if (result.type === "full") {
       setResultContents(result);
       setResultsLoading(false);
+    } else if (result.type !== "url") {
+      setResultContents(null);
+      setResultsLoading(false);
     } else {
       const resultUrl =
-        "url" in result && typeof result.url === "string" ? result.url : null;
+        typeof result.url === "string" && result.url.trim() ? result.url : null;
 
       if (!resultUrl) {
         console.error("Result URL is missing or invalid");
