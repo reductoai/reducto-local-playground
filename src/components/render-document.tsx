@@ -753,10 +753,30 @@ const RenderDocument = ({
       setResultContents(result);
       setResultsLoading(false);
     } else {
-      fetch(result.url)
-        .then((res) => res.json())
+      const resultUrl =
+        "url" in result && typeof result.url === "string" ? result.url : null;
+
+      if (!resultUrl) {
+        console.error("Result URL is missing or invalid");
+        setResultContents(null);
+        setResultsLoading(false);
+        return;
+      }
+
+      fetch(resultUrl)
+        .then((res) => {
+          if (!res.ok) {
+            throw new Error(`Failed to fetch result: ${res.status}`);
+          }
+          return res.json();
+        })
         .then((res) => {
           setResultContents(res);
+          setResultsLoading(false);
+        })
+        .catch((error) => {
+          console.error("Failed to load result:", error);
+          setResultContents(null);
           setResultsLoading(false);
         });
     }
